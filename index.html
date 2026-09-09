@@ -207,9 +207,11 @@ tr:hover td{background:#faf8f1;}
 .product-grid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;align-content:start;padding-bottom:10px;}
 .product-card{
   background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:6px;
-  min-height:150px;
+  min-height:150px;cursor:pointer;transition:background .1s ease,transform .1s ease;
 }
-.product-card.oos{opacity:.55;}
+.product-card:active{background:#f6f2e6;transform:scale(0.98);}
+.product-card.oos{opacity:.55;cursor:default;}
+.product-card.oos:active{background:#fff;transform:none;}
 .pc-cat{font-size:10px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.4px;}
 .pc-name{font-size:13.5px;font-weight:700;color:var(--navy);line-height:1.25;min-height:34px;}
 .pc-meta{font-size:11.5px;color:var(--muted);}
@@ -218,7 +220,7 @@ tr:hover td{background:#faf8f1;}
 .pc-stock{font-size:10.5px;color:var(--muted);}
 .pc-add{background:var(--navy-3);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:800;font-size:12px;}
 .pc-add:disabled{background:#d8d2bf;color:#8b8672;}
-.pc-oos-tag{background:#f2e3e1;color:var(--red);font-size:10px;font-weight:800;padding:4px 8px;border-radius:8px;text-align:center;}
+.pc-oos-tag{background:#f2e3e1;color:var(--red);font-size:10px;font-weight:800;padding:4px 8px;border-radius:8px;text-align:center;white-space:nowrap;}
 
 .cart-card{flex:1;display:flex;flex-direction:column;overflow:hidden;}
 .cart-head{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;}
@@ -593,12 +595,72 @@ function generateTracksuitProducts(){
   return products;
 }
 
+/* T-shirt lines from "JAMARA UNIFORMS - CHUKA BRANCH — Stock Taking Sheet — T-Shirts" (16 colour/section
+   groups). School mappings below are best-effort matches from the sheet's section labels to schoolDefs()
+   — a few labels (e.g. "Kianjeru Boarders", "Kianjeru School", plain "Kathituni") don't map cleanly to one
+   specific school level, so those are assigned to the closest related school id(s); double-check in
+   Products and narrow the school assignment if needed. Cost/price are flat KSh 250 / KSh 500 across every
+   colour and size, as instructed. Stock is seeded at 0 — the physical count sheet was blank when supplied;
+   enter the real counted opening stock per size via Stock Adjustment once counting is done. */
+function generateTshirtStockProducts(){
+  const LINES = [
+    {name:'Black T-Shirt', schools:[], color:'Black'},
+    {name:'Red T-Shirt', schools:[], color:'Red'},
+    {name:'Kathituni T-Shirt', schools:['kathituni-jr','kathituni-cbc'], color:'Teal Blue'},
+    {name:'Kianjeru Lower Primary T-Shirt', schools:['kianjeru-cbc'], color:'Teal Blue'},
+    {name:'Kianjeru Boarders T-Shirt', schools:['kianjeru-cbc','kianjeru-jss'], color:'Red'},
+    {name:'Kianjeru JSS T-Shirt', schools:['kianjeru-jss'], color:'Navy Blue'},
+    {name:'Kathituni JSS T-Shirt', schools:['kathituni-jss'], color:'Blue'},
+    {name:'Njeru Junior T-Shirt', schools:['njeru-cbc','njeru-jss'], color:'Red'},
+    {name:'Mururi Boarding T-Shirt', schools:['mururi-cbc','mururi-jss'], color:'Red'},
+    {name:'Black T-Shirt (2)', schools:[], color:'Black'}, // sheet lists "Black" twice (sections 1 & 10) — kept as separate lines/SKUs; rename once the distinction (batch, print, etc.) is known
+    {name:'White T-Shirt', schools:[], color:'White'},
+    {name:'Dark Green T-Shirt', schools:[], color:'Dark Green'},
+    {name:'Kianjeru School T-Shirt', schools:['kianjeru-cbc','kianjeru-jss'], color:'Yellow'},
+    {name:'Bonanza School T-Shirt', schools:['bonanza'], color:'Yellow'},
+    {name:'Translight School T-Shirt', schools:['translight-jss','translight-cbc'], color:'Maroon'},
+    {name:'Kiini Boarding T-Shirt', schools:['kiini-jss','kiini-cbc'], color:'Yellow'}
+  ];
+  const SIZES = ['Age 4','Age 6','Age 8','Age 10','Age 12','Small (Kids)','Medium (Kids)','Large (Kids)','Small (Adult)','Medium (Adult)','Large (Adult)','XL (Adult)','XXL (Adult)'];
+  const COST = 250, PRICE = 500;
+  const products = [];
+  let counter = 1;
+  LINES.forEach(line => {
+    SIZES.forEach(size => {
+      const sku = 'JAM-CHU-TSH-'+String(counter).padStart(4,'0');
+      counter++;
+      products.push({
+        id: uid('prod'),
+        sku,
+        name: line.name,
+        category: 'TSHIRT',
+        schools: line.schools,
+        gender: 'Unisex',
+        size,
+        color: line.color,
+        cost: COST,
+        price: PRICE,
+        stock: 0,
+        minStock: 5,
+        barcode: sku,
+        supplier: 'In-house Production',
+        active: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+    });
+  });
+  return products;
+}
+
 function seedDatabase(){
   const schools = schoolDefs();
   schools.slice(0,11).forEach(s=> s.quickAccess = true); // default quick-access set
   let products = generateDemoProducts(schools);
   products = mergeSharedProducts(products, schools);
   products = products.concat(generateTracksuitProducts());
+  // T-shirt stock lines are added by loadDB()'s one-time migration (see generateTshirtStockProducts),
+  // so they're seeded exactly once whether this is a brand-new DB or an existing saved one.
 
   const fullSets = {};
   schools.forEach(school => {
@@ -646,6 +708,12 @@ function loadDB(){
   if(!DB.settings.pins) DB.settings.pins = freshSettings().pins;
   if(!DB.stockMovements) DB.stockMovements = [];
   if(!DB.fullSets) DB.fullSets = {};
+  // one-time migration: add the T-shirt stock-taking lines to any DB that predates them,
+  // without touching existing products, sales, shifts or other saved data
+  if(!DB.tshirtStockSeeded){
+    DB.products = DB.products.concat(generateTshirtStockProducts());
+    DB.tshirtStockSeeded = true;
+  }
   saveDB();
 }
 function saveDB(){
@@ -1182,17 +1250,14 @@ function renderProductCard(p){
   const oos = p.stock<=0;
   const status = stockStatus(p);
   return `
-  <div class="product-card ${oos?'oos':''}">
+  <div class="product-card ${oos?'oos':''}" ${oos?'':`onclick="addToCart('${p.id}')"`}>
     <div class="pc-cat">${CAT_LABEL[p.category]||p.category}</div>
     <div class="pc-name">${esc(p.name)}</div>
     <div class="pc-meta">${esc(p.schools.length>1 ? p.schools.length+' schools' : schoolShort(p.schools[0]))}</div>
     <div class="pc-meta">${esc(p.gender)} • Size ${esc(p.size)} • ${esc(p.color)}</div>
     <div class="pc-bottom">
-      <div>
-        <div class="pc-price">${fmt(p.price)}</div>
-        <div class="pc-stock ${status==='low'?'status-low':''} ${status==='out'?'status-out':''}">Stock: ${p.stock}</div>
-      </div>
-      ${oos ? `<div class="pc-oos-tag">OUT OF<br>STOCK</div>` : `<button class="pc-add" onclick="addToCart('${p.id}')">ADD</button>`}
+      <div class="pc-price">${fmt(p.price)}</div>
+      ${oos ? `<div class="pc-oos-tag">OUT OF STOCK</div>` : `<div class="pc-stock ${status==='low'?'status-low':''} ${status==='out'?'status-out':''}">Stock: ${p.stock}</div>`}
     </div>
   </div>`;
 }
