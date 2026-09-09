@@ -207,11 +207,9 @@ tr:hover td{background:#faf8f1;}
 .product-grid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;align-content:start;padding-bottom:10px;}
 .product-card{
   background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:6px;
-  min-height:150px;cursor:pointer;transition:background .1s ease,transform .1s ease;
+  min-height:150px;
 }
-.product-card:active{background:#f6f2e6;transform:scale(0.98);}
-.product-card.oos{opacity:.55;cursor:default;}
-.product-card.oos:active{background:#fff;transform:none;}
+.product-card.oos{opacity:.55;}
 .pc-cat{font-size:10px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.4px;}
 .pc-name{font-size:13.5px;font-weight:700;color:var(--navy);line-height:1.25;min-height:34px;}
 .pc-meta{font-size:11.5px;color:var(--muted);}
@@ -220,7 +218,7 @@ tr:hover td{background:#faf8f1;}
 .pc-stock{font-size:10.5px;color:var(--muted);}
 .pc-add{background:var(--navy-3);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:800;font-size:12px;}
 .pc-add:disabled{background:#d8d2bf;color:#8b8672;}
-.pc-oos-tag{background:#f2e3e1;color:var(--red);font-size:10px;font-weight:800;padding:4px 8px;border-radius:8px;text-align:center;white-space:nowrap;}
+.pc-oos-tag{background:#f2e3e1;color:var(--red);font-size:10px;font-weight:800;padding:4px 8px;border-radius:8px;text-align:center;}
 
 .cart-card{flex:1;display:flex;flex-direction:column;overflow:hidden;}
 .cart-head{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;}
@@ -386,7 +384,8 @@ function freshSettings(){
     maxCashierDiscountPct: 5,
     receiptPrefix: 'JAM',
     pins: { jane: '9999', ken: '1234', makena: '5678' },
-    quickSchools: []
+    quickSchools: [],
+    escposCharWidth: 42
   };
 }
 
@@ -595,72 +594,12 @@ function generateTracksuitProducts(){
   return products;
 }
 
-/* T-shirt lines from "JAMARA UNIFORMS - CHUKA BRANCH — Stock Taking Sheet — T-Shirts" (16 colour/section
-   groups). School mappings below are best-effort matches from the sheet's section labels to schoolDefs()
-   — a few labels (e.g. "Kianjeru Boarders", "Kianjeru School", plain "Kathituni") don't map cleanly to one
-   specific school level, so those are assigned to the closest related school id(s); double-check in
-   Products and narrow the school assignment if needed. Cost/price are flat KSh 250 / KSh 500 across every
-   colour and size, as instructed. Stock is seeded at 0 — the physical count sheet was blank when supplied;
-   enter the real counted opening stock per size via Stock Adjustment once counting is done. */
-function generateTshirtStockProducts(){
-  const LINES = [
-    {name:'Black T-Shirt', schools:[], color:'Black'},
-    {name:'Red T-Shirt', schools:[], color:'Red'},
-    {name:'Kathituni T-Shirt', schools:['kathituni-jr','kathituni-cbc'], color:'Teal Blue'},
-    {name:'Kianjeru Lower Primary T-Shirt', schools:['kianjeru-cbc'], color:'Teal Blue'},
-    {name:'Kianjeru Boarders T-Shirt', schools:['kianjeru-cbc','kianjeru-jss'], color:'Red'},
-    {name:'Kianjeru JSS T-Shirt', schools:['kianjeru-jss'], color:'Navy Blue'},
-    {name:'Kathituni JSS T-Shirt', schools:['kathituni-jss'], color:'Blue'},
-    {name:'Njeru Junior T-Shirt', schools:['njeru-cbc','njeru-jss'], color:'Red'},
-    {name:'Mururi Boarding T-Shirt', schools:['mururi-cbc','mururi-jss'], color:'Red'},
-    {name:'Black T-Shirt (2)', schools:[], color:'Black'}, // sheet lists "Black" twice (sections 1 & 10) — kept as separate lines/SKUs; rename once the distinction (batch, print, etc.) is known
-    {name:'White T-Shirt', schools:[], color:'White'},
-    {name:'Dark Green T-Shirt', schools:[], color:'Dark Green'},
-    {name:'Kianjeru School T-Shirt', schools:['kianjeru-cbc','kianjeru-jss'], color:'Yellow'},
-    {name:'Bonanza School T-Shirt', schools:['bonanza'], color:'Yellow'},
-    {name:'Translight School T-Shirt', schools:['translight-jss','translight-cbc'], color:'Maroon'},
-    {name:'Kiini Boarding T-Shirt', schools:['kiini-jss','kiini-cbc'], color:'Yellow'}
-  ];
-  const SIZES = ['Age 4','Age 6','Age 8','Age 10','Age 12','Small (Kids)','Medium (Kids)','Large (Kids)','Small (Adult)','Medium (Adult)','Large (Adult)','XL (Adult)','XXL (Adult)'];
-  const COST = 250, PRICE = 500;
-  const products = [];
-  let counter = 1;
-  LINES.forEach(line => {
-    SIZES.forEach(size => {
-      const sku = 'JAM-CHU-TSH-'+String(counter).padStart(4,'0');
-      counter++;
-      products.push({
-        id: uid('prod'),
-        sku,
-        name: line.name,
-        category: 'TSHIRT',
-        schools: line.schools,
-        gender: 'Unisex',
-        size,
-        color: line.color,
-        cost: COST,
-        price: PRICE,
-        stock: 0,
-        minStock: 5,
-        barcode: sku,
-        supplier: 'In-house Production',
-        active: true,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-    });
-  });
-  return products;
-}
-
 function seedDatabase(){
   const schools = schoolDefs();
   schools.slice(0,11).forEach(s=> s.quickAccess = true); // default quick-access set
   let products = generateDemoProducts(schools);
   products = mergeSharedProducts(products, schools);
   products = products.concat(generateTracksuitProducts());
-  // T-shirt stock lines are added by loadDB()'s one-time migration (see generateTshirtStockProducts),
-  // so they're seeded exactly once whether this is a brand-new DB or an existing saved one.
 
   const fullSets = {};
   schools.forEach(school => {
@@ -708,12 +647,7 @@ function loadDB(){
   if(!DB.settings.pins) DB.settings.pins = freshSettings().pins;
   if(!DB.stockMovements) DB.stockMovements = [];
   if(!DB.fullSets) DB.fullSets = {};
-  // one-time migration: add the T-shirt stock-taking lines to any DB that predates them,
-  // without touching existing products, sales, shifts or other saved data
-  if(!DB.tshirtStockSeeded){
-    DB.products = DB.products.concat(generateTshirtStockProducts());
-    DB.tshirtStockSeeded = true;
-  }
+  if(!DB.settings.escposCharWidth) DB.settings.escposCharWidth = 42;
   saveDB();
 }
 function saveDB(){
@@ -1250,14 +1184,17 @@ function renderProductCard(p){
   const oos = p.stock<=0;
   const status = stockStatus(p);
   return `
-  <div class="product-card ${oos?'oos':''}" ${oos?'':`onclick="addToCart('${p.id}')"`}>
+  <div class="product-card ${oos?'oos':''}">
     <div class="pc-cat">${CAT_LABEL[p.category]||p.category}</div>
     <div class="pc-name">${esc(p.name)}</div>
     <div class="pc-meta">${esc(p.schools.length>1 ? p.schools.length+' schools' : schoolShort(p.schools[0]))}</div>
     <div class="pc-meta">${esc(p.gender)} • Size ${esc(p.size)} • ${esc(p.color)}</div>
     <div class="pc-bottom">
-      <div class="pc-price">${fmt(p.price)}</div>
-      ${oos ? `<div class="pc-oos-tag">OUT OF STOCK</div>` : `<div class="pc-stock ${status==='low'?'status-low':''} ${status==='out'?'status-out':''}">Stock: ${p.stock}</div>`}
+      <div>
+        <div class="pc-price">${fmt(p.price)}</div>
+        <div class="pc-stock ${status==='low'?'status-low':''} ${status==='out'?'status-out':''}">Stock: ${p.stock}</div>
+      </div>
+      ${oos ? `<div class="pc-oos-tag">OUT OF<br>STOCK</div>` : `<button class="pc-add" onclick="addToCart('${p.id}')">ADD</button>`}
     </div>
   </div>`;
 }
@@ -1706,6 +1643,7 @@ function renderReceiptModal(){
     <div class="modal" style="max-width:360px;">
       <div class="modal-head"><h3>${icon('check-circle')} Sale Complete</h3><button class="close-x" onclick="closeModal()">${icon('x')}</button></div>
       <div class="receipt-wrap">${receiptHtml(sale)}</div>
+      <div style="text-align:center;margin-bottom:8px;">${printerStatusBadge()}</div>
       <div class="modal-foot">
         <button class="btn btn-outline" onclick="printReceipt()">${icon('printer')}<span>Print Receipt</span></button>
         <button class="btn btn-gold" onclick="newSale()">${icon('plus')}<span>New Sale</span></button>
@@ -1713,8 +1651,147 @@ function renderReceiptModal(){
     </div>
   </div>`;
 }
-function printReceipt(){
+/* =========================================================================
+   RAW ESC/POS PRINTING VIA WEBUSB (Chrome/Edge only)
+   Talks straight to the thermal printer's USB bulk endpoint, bypassing the
+   OS print dialog entirely. Requires a secure context (https:// or
+   http://localhost) — WebUSB is not available on file:// pages.
+   ========================================================================= */
+let usbPrinter = null; // {device, interfaceNumber, endpointOut}
+const usbPrinterSupported = (typeof navigator !== 'undefined' && !!navigator.usb);
+
+class EscPosBuilder{
+  constructor(){ this.parts = []; }
+  raw(arr){ this.parts.push(new Uint8Array(arr)); return this; }
+  text(str){ this.parts.push(new TextEncoder().encode(str)); return this; }
+  line(str){ return this.text(str||'').raw([0x0A]); }
+  init(){ return this.raw([0x1B,0x40]); }               // ESC @
+  align(a){ return this.raw([0x1B,0x61,a]); }           // 0 left, 1 center, 2 right
+  bold(on){ return this.raw([0x1B,0x45,on?1:0]); }      // ESC E n
+  doubleSize(on){ return this.raw([0x1D,0x21, on?0x11:0x00]); } // GS ! n
+  feed(n){ const a=[]; for(let i=0;i<(n||1);i++) a.push(0x0A); return this.raw(a); }
+  cut(){ return this.raw([0x1D,0x56,0x01]); }           // GS V 1 (partial cut)
+  toBytes(){
+    let total=0; this.parts.forEach(p=>total+=p.length);
+    const out = new Uint8Array(total); let off=0;
+    this.parts.forEach(p=>{ out.set(p, off); off+=p.length; });
+    return out;
+  }
+}
+function escposRow(left, right, width){
+  left = left||''; right = right||'';
+  const space = Math.max(1, width-left.length-right.length);
+  return left+' '.repeat(space)+right;
+}
+function buildEscPosReceipt(sale){
+  const W = DB.settings.escposCharWidth || 42;
+  const s = DB.settings;
+  const b = new EscPosBuilder();
+  b.init();
+  b.align(1); b.bold(true); b.doubleSize(true);
+  b.line(s.businessName);
+  b.doubleSize(false); b.bold(false);
+  b.line(s.branch);
+  b.line(s.phone);
+  b.align(0);
+  b.line('-'.repeat(W));
+  b.line(escposRow('Receipt No:', sale.receiptNo, W));
+  b.line(escposRow('Date:', dateDisplay(sale.createdAt), W));
+  b.line(escposRow('Time:', timeDisplay(sale.createdAt), W));
+  b.line(escposRow('Cashier:', sale.cashier, W));
+  b.line('-'.repeat(W));
+  sale.items.forEach(it=>{
+    b.line(it.name);
+    b.line('  '+it.school+' - '+it.size);
+    b.line(escposRow('  '+it.qty+' x '+fmt(it.price), fmt(it.total), W));
+  });
+  b.line('-'.repeat(W));
+  b.line(escposRow('Subtotal', fmt(sale.subtotal), W));
+  b.line(escposRow('Discount', fmt(sale.discount), W));
+  b.bold(true);
+  b.line(escposRow('TOTAL', fmt(sale.total), W));
+  b.bold(false);
+  b.line(escposRow('Payment', sale.paymentMethod, W));
+  if(sale.mpesaCode) b.line(escposRow('M-PESA Ref', sale.mpesaCode, W));
+  if(sale.status && sale.status!=='COMPLETED') b.line(escposRow('STATUS', sale.status, W));
+  b.line('-'.repeat(W));
+  b.align(1);
+  b.line(s.footer);
+  b.line('Built by MVULE Technologies');
+  b.feed(3);
+  b.cut();
+  return b.toBytes();
+}
+async function initUsbPrinterDevice(device){
+  await device.open();
+  if(device.configuration===null) await device.selectConfiguration(1);
+  let iface = device.configuration.interfaces.find(i=>i.alternates.some(a=>a.interfaceClass===7));
+  if(!iface) iface = device.configuration.interfaces[0];
+  const alt = iface.alternates.find(a=>a.interfaceClass===7) || iface.alternates[0];
+  await device.claimInterface(iface.interfaceNumber);
+  const epOut = alt.endpoints.find(e=>e.direction==='out');
+  if(!epOut) throw new Error('No OUT endpoint found on this USB device.');
+  usbPrinter = { device, interfaceNumber: iface.interfaceNumber, endpointOut: epOut.endpointNumber };
+}
+async function connectPrinterUSB(){
+  if(!usbPrinterSupported){
+    toast('WebUSB is not available. Use Chrome or Edge, served over https:// or http://localhost.', 'err');
+    return;
+  }
+  try{
+    const device = await navigator.usb.requestDevice({filters: []});
+    await initUsbPrinterDevice(device);
+    toast('Printer connected: '+(device.productName||'USB device'), 'ok');
+    logActivity(session.user.name, 'Printer Connected (USB)', device.productName||'');
+    saveDB();
+  }catch(e){
+    if(e.name!=='NotFoundError') toast('Could not connect: '+e.message, 'err');
+  }
+  render();
+}
+async function tryAutoReconnectPrinter(){
+  if(!usbPrinterSupported) return;
+  try{
+    const devices = await navigator.usb.getDevices();
+    if(devices.length){ await initUsbPrinterDevice(devices[0]); render(); }
+  }catch(e){ console.warn('Printer auto-reconnect failed', e); }
+}
+function disconnectPrinterUSB(){
+  if(usbPrinter){
+    try{ usbPrinter.device.close(); }catch(e){}
+    usbPrinter = null;
+    toast('Printer disconnected.', 'ok');
+    render();
+  }
+}
+async function sendToUsbPrinter(bytes){
+  if(!usbPrinter) throw new Error('Printer not connected');
+  const CHUNK = 4096;
+  for(let i=0;i<bytes.length;i+=CHUNK){
+    await usbPrinter.device.transferOut(usbPrinter.endpointOut, bytes.slice(i, i+CHUNK));
+  }
+}
+async function testPrintUsb(){
+  const fake = {
+    receiptNo: DB.settings.receiptPrefix+'-TEST-0000', createdAt: Date.now(), cashier: session.user.name,
+    items: [{name:'Test Item', school:'Test School', size:'—', qty:1, price:0, total:0}],
+    subtotal:0, discount:0, total:0, paymentMethod:'TEST', mpesaCode:null, status:'COMPLETED'
+  };
+  try{ await sendToUsbPrinter(buildEscPosReceipt(fake)); toast('Test receipt sent.', 'ok'); }
+  catch(e){ toast('Test print failed: '+e.message, 'err'); }
+}
+function printerStatusBadge(){
+  if(!usbPrinterSupported) return `<span class="pill" style="background:#f2e3e1;color:var(--red);">USB printing unavailable in this browser</span>`;
+  if(usbPrinter) return `<span class="pill" style="background:#e7f4ec;color:var(--green);">${icon('check')} Printer connected</span>`;
+  return `<span class="pill" style="background:#f2efe4;color:var(--muted);">Printer not connected</span>`;
+}
+
+async function printReceipt(){
   const sale = session.lastSale;
+  if(usbPrinter){
+    try{ await sendToUsbPrinter(buildEscPosReceipt(sale)); toast('Receipt sent to printer.', 'ok'); return; }
+    catch(e){ toast('USB print failed, falling back to browser print.', 'err'); }
+  }
   document.getElementById('print-area').innerHTML = receiptHtml(sale);
   window.print();
 }
@@ -2130,6 +2207,7 @@ function renderViewReceiptModal(){
     <div class="modal" style="max-width:360px;">
       <div class="modal-head"><h3>Receipt</h3><button class="close-x" onclick="closeModal()">${icon('x')}</button></div>
       <div class="receipt-wrap">${receiptHtml(sale)}</div>
+      <div style="text-align:center;margin-bottom:8px;">${printerStatusBadge()}</div>
       <div class="modal-foot">
         <button class="btn btn-outline" onclick="printSpecific('${sale.id}')">${icon('printer')}<span>Print</span></button>
         <button class="btn btn-muted" onclick="closeModal()">Close</button>
@@ -2137,8 +2215,12 @@ function renderViewReceiptModal(){
     </div>
   </div>`;
 }
-function printSpecific(id){
+async function printSpecific(id){
   const sale = DB.sales.find(s=>s.id===id);
+  if(usbPrinter){
+    try{ await sendToUsbPrinter(buildEscPosReceipt(sale)); toast('Receipt sent to printer.', 'ok'); return; }
+    catch(e){ toast('USB print failed, falling back to browser print.', 'err'); }
+  }
   document.getElementById('print-area').innerHTML = receiptHtml(sale);
   window.print();
 }
@@ -2446,6 +2528,29 @@ function renderSettings(){
     </div>
     <label>Receipt Number Prefix</label><input type="text" id="stPrefix" value="${esc(s.receiptPrefix)}" style="margin-bottom:16px;">
     <button class="btn btn-gold btn-lg" onclick="saveSettings()">${icon('check')}<span>Save Settings</span></button>
+  </div>
+  <div class="card" style="padding:20px;max-width:640px;margin-top:16px;">
+    <div class="section-head" style="margin-bottom:10px;"><h2 style="font-size:16px;">Thermal Printer (WebUSB)</h2>${printerStatusBadge()}</div>
+    ${!usbPrinterSupported ? `
+      <div class="hint" style="margin-bottom:12px;">
+        WebUSB isn't available here. It only works in Chrome or Edge, and the page must be served over
+        <b>https://</b> or <b>http://localhost</b> — not opened directly as a local file (file://). Run a tiny
+        local server (e.g. <code>python -m http.server</code> in the app's folder, then open
+        <code>http://localhost:8000</code>) to enable it. Until then, use the regular Print Receipt button,
+        which opens the normal Windows print dialog instead.
+      </div>` : `
+      <div class="hint" style="margin-bottom:12px;">
+        Connecting sends receipts as raw ESC/POS commands straight to the printer's USB endpoint — no print
+        dialog, no printer driver required. Your browser will remember this printer next time, on this device.
+      </div>`}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn btn-primary" onclick="connectPrinterUSB()" ${!usbPrinterSupported?'disabled':''}>${icon('usb')}<span>${usbPrinter?'Reconnect / Choose Printer':'Connect Printer'}</span></button>
+      <button class="btn btn-muted" onclick="disconnectPrinterUSB()" ${!usbPrinter?'disabled':''}>${icon('power-off')}<span>Disconnect</span></button>
+      <button class="btn btn-outline" onclick="testPrintUsb()" ${!usbPrinter?'disabled':''}>${icon('printer')}<span>Test Print</span></button>
+    </div>
+    <label>Receipt Width (characters, for the ESC/POS text layout)</label>
+    <input type="number" id="stEscWidth" value="${s.escposCharWidth||42}" style="max-width:140px;">
+    <div class="hint" style="margin-top:4px;">Most 80mm printers use 42 or 48 — if columns look misaligned on a test print, try the other value.</div>
   </div>`;
 }
 function saveSettings(){
@@ -2458,6 +2563,7 @@ function saveSettings(){
   s.lowStockThreshold = parseInt(document.getElementById('stLowStock').value)||5;
   s.maxCashierDiscountPct = parseFloat(document.getElementById('stMaxDisc').value)||0;
   s.receiptPrefix = document.getElementById('stPrefix').value.trim()||'JAM';
+  s.escposCharWidth = parseInt(document.getElementById('stEscWidth').value)||42;
   logActivity(session.user.name, 'Settings Changed', '');
   saveDB(); toast('Settings saved.', 'ok');
 }
@@ -2616,6 +2722,16 @@ function attachGlobalHandlers(){
 /* ================= INIT ================= */
 loadDB();
 render();
+if(usbPrinterSupported){
+  tryAutoReconnectPrinter();
+  navigator.usb.addEventListener('disconnect', (e)=>{
+    if(usbPrinter && e.device===usbPrinter.device){
+      usbPrinter = null;
+      toast('Thermal printer disconnected.', 'err');
+      render();
+    }
+  });
+}
 </script>
 </body>
 </html>
