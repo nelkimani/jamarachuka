@@ -387,7 +387,7 @@ function freshSettings(){
     receiptPrefix: 'JAM',
     pins: { jane: '9999', ken: '1234', makena: '5678' },
     quickSchools: [],
-    usbPrinter: { enabled:false, vendorId:null, productId:null, productName:'', charsPerLine:42 }
+    usbPrinter: { enabled:false, vendorId:null, productId:null, productName:'', charsPerLine:32 }
   };
 }
 
@@ -750,7 +750,8 @@ let session = {
   pinTarget: null,       // which user is entering PIN at login
   pinBuffer: '',
   managerAuthResolve: null,
-  lastReceiptHtml: ''
+  lastReceiptHtml: '',
+  usbPrinterError: null   // last USB printer connect/print error, shown in Settings until resolved
 };
 
 function currentShiftObj(){
@@ -1681,12 +1682,29 @@ let usbPrinterEndpoint = null;
 function usbSupported(){ return 'usb' in navigator; }
 
 async function claimUsbPrinter(device){
-  if(!device.opened) await device.open();
+  try{
+    if(!device.opened) await device.open();
+  }catch(err){
+    // On Windows, this almost always means a kernel driver (Windows' built-in printer
+    // class driver, or the printer's own installed driver) already has the device open —
+    // WebUSB can't share it. See the guidance surfaced in connectUsbPrinter()'s catch block.
+    if(err && err.name==='SecurityError'){
+      throw Object.assign(new Error('Access denied opening the device — see the note below for the Windows fix.'), {code:'WINDOWS_DRIVER_CONFLICT'});
+    }
+    throw err;
+  }
   if(device.configuration === null) await device.selectConfiguration(1);
   // Printers are USB class 7; fall back to the first interface if the class isn't reported that way.
   let iface = device.configuration.interfaces.find(i=>
     i.alternates.some(a=>a.interfaceClass===7)) || device.configuration.interfaces[0];
-  await device.claimInterface(iface.interfaceNumber);
+  try{
+    await device.claimInterface(iface.interfaceNumber);
+  }catch(err){
+    if(err && (err.name==='SecurityError' || /claim/i.test(err.message||''))){
+      throw Object.assign(new Error('Access denied claiming the USB interface — see the note below for the Windows fix.'), {code:'WINDOWS_DRIVER_CONFLICT'});
+    }
+    throw err;
+  }
   const alt = iface.alternates.find(a=>a.interfaceClass===7) || iface.alternates[0];
   const outEp = alt.endpoints.find(e=>e.direction==='out');
   if(!outEp) throw new Error('No OUT endpoint found on this USB device.');
@@ -1703,11 +1721,19 @@ async function connectUsbPrinter(){
     DB.settings.usbPrinter.productId = device.productId;
     DB.settings.usbPrinter.productName = device.productName || '';
     DB.settings.usbPrinter.enabled = true;
+    session.usbPrinterError = null;
     saveDB();
     toast('Printer connected: '+(device.productName||'USB device'), 'ok');
     render();
   }catch(err){
     if(err && err.name==='NotFoundError'){ /* user cancelled the chooser — no toast needed */ return; }
+    if(err && err.code==='WINDOWS_DRIVER_CONFLICT'){
+      session.usbPrinterError = 'windows-driver';
+      toast('Access denied — Windows has its own driver attached to the printer. See the fix below.', 'err');
+      render();
+      return;
+    }
+    session.usbPrinterError = null;
     toast('Couldn\'t connect to printer: '+err.message, 'err');
   }
 }
@@ -1780,7 +1806,7 @@ function twoCol(left, right, width){
   return gap>0 ? left+' '.repeat(gap)+right : left.slice(0,width-right.length-1)+' '+right;
 }
 function buildEscPosReceipt(sale){
-  const w = (DB.settings.usbPrinter && DB.settings.usbPrinter.charsPerLine) || 42;
+  const w = (DB.settings.usbPrinter && DB.settings.usbPrinter.charsPerLine) || 32;
   const dash = '-'.repeat(w);
   const b = escPosBuilder().init();
   b.align('center').doubleSize(true).bold(true).line(DB.settings.businessName).doubleSize(false).bold(false);
@@ -1831,7 +1857,7 @@ async function printReceiptForSale(sale){
 async function testPrintUsb(){
   if(!usbPrinterReady()){ toast('Connect and enable a USB printer first.', 'err'); return; }
   try{
-    const w = (DB.settings.usbPrinter && DB.settings.usbPrinter.charsPerLine) || 42;
+    const w = (DB.settings.usbPrinter && DB.settings.usbPrinter.charsPerLine) || 32;
     const b = escPosBuilder().init().align('center').bold(true).line('TEST PRINT').bold(false)
       .line('-'.repeat(w)).line(DB.settings.businessName).line(new Date().toString().slice(0,24))
       .feed(3).cut();
@@ -2620,6 +2646,22 @@ function renderSettings(){
     ${!usbSupported() ? `
     <div class="hint" style="color:var(--red);font-weight:700;">WebUSB isn't available in this browser. Receipts will use the browser print dialog.</div>
     ` : `
+    ${session.usbPrinterError==='windows-driver' ? `
+    <div class="hint" style="background:#fdf2f0;border:1px solid #e8b8b0;border-radius:10px;padding:12px 14px;margin-bottom:14px;color:var(--ink);">
+      <strong style="color:var(--red);">Access denied — this is a Windows driver conflict, not a bug.</strong>
+      On Windows, the printer's own driver (or Windows' built-in USB printer class driver) grabs the
+      device exclusively, so Chrome's WebUSB can't open it until that driver is replaced for this one
+      device. Fix it once with a free tool called <strong>Zadig</strong>:
+      <ol style="margin:8px 0 0 18px;padding:0;">
+        <li>Unplug the printer from any Windows-installed printer queue (don't uninstall the physical printer, just make sure it isn't set up as a normal Windows printer).</li>
+        <li>Download Zadig from <strong>zadig.akeo.ie</strong> and run it as Administrator.</li>
+        <li>In Zadig, go to Options → List All Devices, then pick your printer from the dropdown (it may show as "USB Printing Support" or the printer's model name).</li>
+        <li>Select <strong>WinUSB</strong> as the target driver and click "Replace Driver" (or "Install Driver").</li>
+        <li>Unplug and replug the printer, then click "Connect USB Printer" below again.</li>
+      </ol>
+      <div style="margin-top:8px;">Note: this replaces the driver only for that one USB device, and only affects raw WebUSB access — it won't affect other USB devices on the PC.</div>
+    </div>
+    ` : ''}
     <div class="rline" style="margin-bottom:10px;">
       <span>Status</span>
       <span style="font-weight:800;color:${usbPrinterDevice?'var(--ok,#2e7d32)':'var(--muted)'};">
@@ -2627,7 +2669,16 @@ function renderSettings(){
       </span>
     </div>
     <div class="grid2" style="margin-bottom:14px;">
-      <div><label>Characters per line</label><input type="number" id="stUsbCols" value="${s.usbPrinter.charsPerLine}" min="24" max="64"></div>
+      <div>
+        <label>Characters per line</label>
+        <input type="number" id="stUsbCols" value="${s.usbPrinter.charsPerLine}" min="24" max="64">
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="document.getElementById('stUsbCols').value=32">58mm (32)</button>
+          <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="document.getElementById('stUsbCols').value=42">80mm (42)</button>
+          <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="document.getElementById('stUsbCols').value=48">80mm wide (48)</button>
+        </div>
+        <p class="hint" style="margin-top:6px;">If lines print cramped against the edge or run off the paper, lower this — 32 fits most 58mm rollers, 42–48 fits 80mm. Save Settings, then Test Print to check.</p>
+      </div>
       <div style="display:flex;align-items:flex-end;">
         <label style="display:flex;align-items:center;gap:8px;font-weight:600;">
           <input type="checkbox" id="stUsbEnabled" ${s.usbPrinter.enabled?'checked':''}> Use USB printer for receipts
