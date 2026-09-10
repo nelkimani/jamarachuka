@@ -2014,7 +2014,7 @@ function renderProductFormModal(){
         <div class="grid3" style="margin-bottom:12px;">
           <div><label>Cost Price</label><input type="number" id="pfCost" value="${p?p.cost:''}"></div>
           <div><label>Selling Price</label><input type="number" id="pfPrice" value="${p?p.price:''}"></div>
-          <div><label>Min Stock</label><input type="number" id="pfMinStock" value="${p?p.minStock:5}"></div>
+          <div><label>Min Stock</label><input type="number" id="pfMinStock" value="${p?p.minStock:DB.settings.lowStockThreshold}"></div>
         </div>
         <div class="grid2" style="margin-bottom:12px;">
           <div><label>Current Stock</label><input type="number" id="pfStock" value="${p?p.stock:0}"></div>
@@ -2045,7 +2045,8 @@ function saveProductForm(id){
   const color = document.getElementById('pfColor').value.trim();
   const cost = parseFloat(document.getElementById('pfCost').value)||0;
   const price = parseFloat(document.getElementById('pfPrice').value)||0;
-  const minStock = parseInt(document.getElementById('pfMinStock').value)||0;
+  const minStockRaw = parseInt(document.getElementById('pfMinStock').value);
+  const minStock = Number.isFinite(minStockRaw) ? minStockRaw : DB.settings.lowStockThreshold;
   const stock = parseInt(document.getElementById('pfStock').value)||0;
   let sku = document.getElementById('pfSku').value.trim();
   let barcode = document.getElementById('pfBarcode').value.trim();
@@ -2725,7 +2726,7 @@ function renderBackup(){
   <div class="grid2">
     <div class="card" style="padding:20px;">
       <h4 style="margin:0 0 8px;color:var(--navy);">Export Backup</h4>
-      <p class="hint" style="margin-bottom:14px;">Download a complete JSON backup of products, schools, inventory, sales, users, shifts, settings and logs.</p>
+      <p class="hint" style="margin-bottom:14px;">Download a complete JSON backup of products, schools, inventory, sales, users, shifts, settings and logs. Staff login PINs are excluded for security — restoring a backup keeps this device's current PINs.</p>
       <button class="btn btn-gold" onclick="exportBackup()">${icon('download')}<span>Export Backup (JSON)</span></button>
     </div>
     <div class="card" style="padding:20px;">
@@ -2748,7 +2749,11 @@ function renderBackup(){
   </div>`;
 }
 function exportBackup(){
-  const blob = new Blob([JSON.stringify(DB, null, 2)], {type:'application/json'});
+  // PINs are per-device login credentials, not shop data — they're deliberately left out of the
+  // exported file so a shared/emailed/uploaded backup can't be used to log in as staff elsewhere.
+  const exportData = JSON.parse(JSON.stringify(DB));
+  delete exportData.settings.pins;
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = 'jamara-chuka-backup-'+todayStr()+'.json';
@@ -2787,7 +2792,11 @@ function doRestore(){
     try{
       const parsed = JSON.parse(e.target.result);
       if(!parsed.products || !parsed.schools || !parsed.settings){ throw new Error('Invalid backup file.'); }
+      // Backups (from Sep 2026 onward) intentionally exclude PINs — keep this device's own
+      // login PINs rather than wiping them out, so restoring shop data can't lock staff out.
+      const currentPins = DB && DB.settings ? DB.settings.pins : null;
       DB = parsed;
+      if(!DB.settings.pins && currentPins) DB.settings.pins = currentPins;
       saveDB();
       closeModal();
       toast('Backup restored successfully.', 'ok');
