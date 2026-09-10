@@ -1819,8 +1819,7 @@ function buildEscPosReceipt(sale){
   b.line(twoCol('Cashier:', sale.cashier, w));
   b.line(dash);
   sale.items.forEach(it=>{
-    wrapText(it.name, w).forEach(l=>b.line(l));
-    b.line('  '+it.school+' - '+it.size);
+    wrapText(it.name+' ('+it.size+')', w).forEach(l=>b.line(l));
     b.line(twoCol('  '+it.qty+' x '+fmt(it.price), fmt(it.total), w));
   });
   b.line(dash);
@@ -1828,6 +1827,10 @@ function buildEscPosReceipt(sale){
   b.line(twoCol('Discount', fmt(sale.discount), w));
   b.bold(true).line(twoCol('TOTAL', fmt(sale.total), w)).bold(false);
   b.line(twoCol('Payment', sale.paymentMethod, w));
+  if(sale.paymentMethod==='CASH' && sale.cashReceived!=null){
+    b.line(twoCol('Cash Tendered', fmt(sale.cashReceived), w));
+    b.line(twoCol('Change', fmt(Math.max(0, sale.cashReceived-sale.total)), w));
+  }
   if(sale.mpesaCode) b.line(twoCol('M-PESA Ref', sale.mpesaCode, w));
   if(sale.status && sale.status!=='COMPLETED') b.bold(true).line(twoCol('STATUS', sale.status, w)).bold(false);
   b.line(dash);
@@ -1881,7 +1884,7 @@ function receiptHtml(sale){
     <table>
       <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th style="text-align:right;">Total</th></tr></thead>
       <tbody>
-        ${sale.items.map(it=>`<tr class="ritem"><td>${esc(it.name)}<br><span style="color:#666;">${esc(it.school)} · ${esc(it.size)}</span></td><td>${it.qty}</td><td>${it.price.toLocaleString()}</td><td style="text-align:right;">${it.total.toLocaleString()}</td></tr>`).join('')}
+        ${sale.items.map(it=>`<tr class="ritem"><td>${esc(it.name)} (${esc(it.size)})</td><td>${it.qty}</td><td>${it.price.toLocaleString()}</td><td style="text-align:right;">${it.total.toLocaleString()}</td></tr>`).join('')}
       </tbody>
     </table>
     <hr>
@@ -1889,6 +1892,10 @@ function receiptHtml(sale){
     <div class="rline"><span>Discount</span><span>${fmt(sale.discount)}</span></div>
     <div class="rline" style="font-weight:800;font-size:13px;"><span>TOTAL</span><span>${fmt(sale.total)}</span></div>
     <div class="rline"><span>Payment</span><span>${sale.paymentMethod}</span></div>
+    ${sale.paymentMethod==='CASH' && sale.cashReceived!=null ? `
+    <div class="rline"><span>Cash Tendered</span><span>${fmt(sale.cashReceived)}</span></div>
+    <div class="rline"><span>Change</span><span>${fmt(Math.max(0, sale.cashReceived-sale.total))}</span></div>
+    ` : ''}
     ${sale.mpesaCode?`<div class="rline"><span>M-PESA Ref</span><span>${esc(sale.mpesaCode)}</span></div>`:''}
     ${sale.status && sale.status!=='COMPLETED' ? `<div class="rline" style="font-weight:800;color:#b3372c;"><span>STATUS</span><span>${sale.status}</span></div>`:''}
     <hr>
