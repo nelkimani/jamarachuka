@@ -6,6 +6,7 @@
 <title>Jamara Uniforms — Chuka Branch POS</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 :root{
   --navy:#6d1a34;
@@ -354,6 +355,7 @@ tr:hover td{background:#faf8f1;}
 <body>
 <div id="app"></div>
 <div id="print-area"></div>
+<input type="file" id="stockFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleStockFile(this)">
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
@@ -366,6 +368,10 @@ const LOGO_DATA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAWgAAAE4CAYAAAB
 const DB_KEY = 'jamara_chuka_db_v1';
 const CATEGORIES = ['SKIRT','DRESS','SHORTS','TROUSER','SHIRT','TSHIRT','SLEEVELESS SWEATER','SWEATER','BLAZER','FLEECE','TIE','SOCKS','PE KIT','BOW TIE','TRACKSUIT'];
 const CAT_LABEL = {SKIRT:'Skirts',DRESS:'Dresses',SHORTS:'Shorts',TROUSER:'Trousers',SHIRT:'Shirts',TSHIRT:'T-Shirts','SLEEVELESS SWEATER':'Sleeveless Sweaters',SWEATER:'Sweaters',BLAZER:'Blazers',FLEECE:'Fleece Jackets',TIE:'Ties',SOCKS:'Socks','PE KIT':'P.E Kits','BOW TIE':'Bow Ties',TRACKSUIT:'Tracksuits'};
+
+function registerCategory(c){
+  if(c && !CATEGORIES.includes(c)){ CATEGORIES.push(c); CAT_LABEL[c] = c.charAt(0)+c.slice(1).toLowerCase(); }
+}
 
 /* ---------------- Utility ---------------- */
 function uid(prefix){ return (prefix||'id')+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -435,262 +441,16 @@ function schoolDefs(){
   ].map(s => Object.assign(s,{active:true, location:'Chuka, Tharaka-Nithi', notes:''}));
 }
 
-// Category templates per school level, used to generate realistic demo catalogue.
-const LEVEL_TEMPLATES = {
-  CBC: [
-    {cat:'DRESS', name:'Checked Pinafore Dress', gender:'Girls', color:'Checked Blue', sizes:['20','24','28'], cost:420, price:700},
-    {cat:'SHORTS', name:'Khaki Shorts', gender:'Boys', color:'Khaki', sizes:['20','24','28'], cost:270, price:450},
-    {cat:'TSHIRT', name:'House T-Shirt', gender:'Unisex', color:'Sky Blue', sizes:['20','24','28'], cost:220, price:400},
-    {cat:'SWEATER', name:'Round Neck Sweater', gender:'Unisex', color:'Navy', sizes:['22','26','30'], cost:600, price:950},
-    {cat:'PE KIT', name:'P.E Kit Set', gender:'Unisex', color:'Navy/White', sizes:['22','26','30'], cost:420, price:700},
-    {cat:'SOCKS', name:'Ankle Socks', gender:'Unisex', color:'White', sizes:['One Size'], cost:80, price:150}
-  ],
-  Primary: [
-    {cat:'DRESS', name:'Checked Pinafore Dress', gender:'Girls', color:'Checked Green', sizes:['20','24','28'], cost:420, price:700},
-    {cat:'SHORTS', name:'Khaki Shorts', gender:'Boys', color:'Khaki', sizes:['20','24','28'], cost:270, price:450},
-    {cat:'TSHIRT', name:'House T-Shirt', gender:'Unisex', color:'Yellow', sizes:['20','24','28'], cost:220, price:400},
-    {cat:'SWEATER', name:'Round Neck Sweater', gender:'Unisex', color:'Maroon', sizes:['22','26','30'], cost:600, price:950},
-    {cat:'PE KIT', name:'P.E Kit Set', gender:'Unisex', color:'Maroon/White', sizes:['22','26','30'], cost:420, price:700},
-    {cat:'SOCKS', name:'Ankle Socks', gender:'Unisex', color:'White', sizes:['One Size'], cost:80, price:150}
-  ],
-  JSS: [
-    {cat:'SHIRT', name:'School Shirt', gender:'Unisex', color:'White', sizes:['28','32','36'], cost:300, price:500},
-    {cat:'TROUSER', name:'School Trouser', gender:'Boys', color:'Navy', sizes:['28','32','36'], cost:550, price:900},
-    {cat:'SKIRT', name:'Pleated Skirt', gender:'Girls', color:'Navy', sizes:['28','32','36'], cost:500, price:800},
-    {cat:'SWEATER', name:'V-Neck Sweater', gender:'Unisex', color:'Navy', sizes:['28','32','36'], cost:600, price:950},
-    {cat:'TIE', name:'School Tie', gender:'Unisex', color:'Striped Navy', sizes:['Standard'], cost:120, price:250},
-    {cat:'SOCKS', name:'Crew Socks', gender:'Unisex', color:'Grey', sizes:['One Size'], cost:80, price:150},
-    {cat:'PE KIT', name:'P.E Kit Set', gender:'Unisex', color:'Navy/White', sizes:['28','32','36'], cost:420, price:700}
-  ],
-  Secondary: [
-    {cat:'SHIRT', name:'School Shirt', gender:'Unisex', color:'White', sizes:['32','36','40'], cost:320, price:550},
-    {cat:'TROUSER', name:'School Trouser', gender:'Boys', color:'Navy', sizes:['32','36','40'], cost:580, price:950},
-    {cat:'SKIRT', name:'Pleated Skirt', gender:'Girls', color:'Navy', sizes:['32','36','40'], cost:530, price:850},
-    {cat:'SWEATER', name:'V-Neck Sweater', gender:'Unisex', color:'Navy', sizes:['32','36','40'], cost:620, price:1000},
-    {cat:'BLAZER', name:'School Blazer', gender:'Unisex', color:'Navy', sizes:['32','36','40'], cost:1500, price:2200},
-    {cat:'FLEECE', name:'Fleece Jacket', gender:'Unisex', color:'Navy', sizes:['32','36','40'], cost:1000, price:1600},
-    {cat:'TIE', name:'School Tie', gender:'Unisex', color:'Striped Navy', sizes:['Standard'], cost:120, price:250},
-    {cat:'SOCKS', name:'Crew Socks', gender:'Unisex', color:'Grey', sizes:['One Size'], cost:80, price:150},
-    {cat:'PE KIT', name:'P.E Kit Set', gender:'Unisex', color:'Navy/White', sizes:['32','36','40'], cost:450, price:750}
-  ]
-};
-
 function schoolCodeFrag(schoolId){ return schoolId.split('-')[0].toUpperCase().slice(0,4); }
 function catFrag(cat){ return cat.replace(/[^A-Z]/gi,'').toUpperCase().slice(0,4); }
-
-function generateDemoProducts(schools){
-  const products = [];
-  let counter = 1;
-  schools.forEach(school => {
-    let templates = LEVEL_TEMPLATES[school.level] || LEVEL_TEMPLATES.JSS;
-    // Translight gets bow ties instead of / in addition to regular ties
-    if(school.id.startsWith('translight')){
-      templates = templates.concat([{cat:'BOW TIE', name:'School Bow Tie', gender:'Unisex', color:'Navy', sizes:['Standard'], cost:100, price:200}]);
-    }
-    templates.forEach(t => {
-      t.sizes.forEach(size => {
-        const sku = 'JAM-CHU-'+catFrag(t.cat)+'-'+String(counter).padStart(4,'0');
-        counter++;
-        const stock = Math.floor(Math.random()*22)+2;
-        products.push({
-          id: uid('prod'),
-          sku,
-          name: t.name,
-          category: t.cat,
-          schools: [school.id],
-          gender: t.gender,
-          size,
-          color: t.color,
-          cost: t.cost,
-          price: t.price,
-          stock,
-          minStock: 5,
-          barcode: sku,
-          supplier: 'In-house Production',
-          active: true,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        });
-      });
-    });
-  });
-  return products;
-}
-
-function mergeSharedProducts(products, schools){
-  // Make a handful of common items (white shirt, grey socks) shared across nearby schools,
-  // to demonstrate multi-school product assignment rather than every item being unique.
-  const secondary = schools.filter(s=>s.level==='Secondary').map(s=>s.id);
-  if(secondary.length>1){
-    products.filter(p=>p.category==='SOCKS' && secondary.includes(p.schools[0])).forEach(p=>{
-      p.schools = secondary.slice();
-    });
-  }
-  return products;
-}
-
-/* Tracksuit lines from the "Jamara Uniforms Chuka — Tracksuit Stock Taking Sheet".
-   schools:[] means general/non-school-specific stock (colourway sold across schools) —
-   it only shows up in POS under "All Schools", not under a specific school filter.
-   Stock is seeded at 0 because the physical count is still in progress; cost/price are
-   placeholders (KSh 900 cost / KSh 1500 sale) — update via Products once real figures
-   and the counted opening stock are known. */
-function generateTracksuitProducts(){
-  const LINES = [
-    {name:'Maroon White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Maroon/White'},
-    {name:'Maroon Yellow Stripes Tracksuit', schools:[], gender:'Unisex', color:'Maroon/Yellow'},
-    {name:'Grey White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Grey/White'},
-    {name:'Navy Blue White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Navy Blue/White'},
-    {name:'Dark Green White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Dark Green/White'},
-    {name:'Navy Blue Yellow Stripes Tracksuit', schools:[], gender:'Unisex', color:'Navy Blue/Yellow'},
-    {name:'Kianjeru Lower Primary Boys Tracksuit', schools:['kianjeru-cbc'], gender:'Boys', color:'School Colors'},
-    {name:'Kianjeru Lower Primary Girls Tracksuit', schools:['kianjeru-cbc'], gender:'Girls', color:'School Colors'},
-    {name:'Kianjeru JSS Tracksuit', schools:['kianjeru-jss'], gender:'Unisex', color:'School Colors'},
-    {name:'Kathituni JSS Tracksuit', schools:['kathituni-jss'], gender:'Unisex', color:'School Colors'},
-    {name:'Kathituni Lower Primary Tracksuit', schools:['kathituni-jr'], gender:'Unisex', color:'School Colors'},
-    {name:'Translight Tracksuit', schools:['translight-jss','translight-cbc'], gender:'Unisex', color:'School Colors'},
-    {name:'Mururi Boarding Tracksuit (Lower Primary)', schools:['mururi-cbc'], gender:'Unisex', color:'School Colors'},
-    {name:'Mururi Boarding Tracksuit (JSS/Upper Primary)', schools:['mururi-jss'], gender:'Unisex', color:'School Colors'},
-    {name:'Purple White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Purple/White'},
-    {name:'Sky Blue White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Sky Blue/White'},
-    {name:'Red White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Red/White'},
-    {name:'Royal Blue White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Royal Blue/White'},
-    {name:'Njeru Junior Tracksuit', schools:['njeru-cbc','njeru-jss'], gender:'Unisex', color:'School Colors'},
-    {name:'Bonanza School Tracksuit', schools:['bonanza'], gender:'Unisex', color:'School Colors'},
-    {name:'Kiini Boarding Tracksuit', schools:['kiini-jss','kiini-cbc'], gender:'Unisex', color:'School Colors'},
-    {name:'Black White Stripes Tracksuit', schools:[], gender:'Unisex', color:'Black/White'}
-  ];
-  const SIZES = ['20','22','24','26','28','30','32','34','36','38','40'];
-  /* Cost/price per size from "Tracksuit Costing & Profit Projection — Jamara Uniforms"
-     (fabric + labour KSh150 + accessories KSh150, sizes 22-38). Sizes 20 and 40 are not
-     in that costing sheet — they're extrapolated from the sheet's own size-to-size trend
-     (cost) and its price tiering (22&24=1300, 26-32=1500, 34-38=1800), flagged as estimates
-     to double-check once those two sizes are actually costed. */
-  const PRICING = {
-    '20': {cost: 665,  price: 1300},           // extrapolated — not on the costing sheet
-    '22': {cost: 692,  price: 1300},
-    '24': {cost: 717,  price: 1300},
-    '26': {cost: 745,  price: 1500},
-    '28': {cost: 770,  price: 1500},
-    '30': {cost: 798,  price: 1500},
-    '32': {cost: 823,  price: 1500},
-    '34': {cost: 876,  price: 1800},
-    '36': {cost: 926,  price: 1800},
-    '38': {cost: 980,  price: 1800},
-    '40': {cost: 1034, price: 1800}            // extrapolated — not on the costing sheet
-  };
-  const products = [];
-  let counter = 1;
-  LINES.forEach(line => {
-    SIZES.forEach(size => {
-      const sku = 'JAM-CHU-TRAC-'+String(counter).padStart(4,'0');
-      counter++;
-      const p = PRICING[size];
-      products.push({
-        id: uid('prod'),
-        sku,
-        name: line.name,
-        category: 'TRACKSUIT',
-        schools: line.schools,
-        gender: line.gender,
-        size,
-        color: line.color,
-        cost: p.cost,
-        price: p.price,
-        stock: 0,
-        minStock: 3,
-        barcode: sku,
-        supplier: 'In-house Production',
-        active: true,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-    });
-  });
-  return products;
-}
-
-/* T-shirt lines from "JAMARA UNIFORMS - CHUKA BRANCH — Stock Taking Sheet — T-Shirts" (16 colour/section
-   groups). School mappings below are best-effort matches from the sheet's section labels to schoolDefs()
-   — a few labels (e.g. "Kianjeru Boarders", "Kianjeru School", plain "Kathituni") don't map cleanly to one
-   specific school level, so those are assigned to the closest related school id(s); double-check in
-   Products and narrow the school assignment if needed. Cost/price are flat KSh 250 / KSh 500 across every
-   colour and size, as instructed. Stock is seeded at 0 — the physical count sheet was blank when supplied;
-   enter the real counted opening stock per size via Stock Adjustment once counting is done. */
-function generateTshirtStockProducts(){
-  const LINES = [
-    {name:'Black T-Shirt', schools:[], color:'Black'},
-    {name:'Red T-Shirt', schools:[], color:'Red'},
-    {name:'Kathituni T-Shirt', schools:['kathituni-jr','kathituni-cbc'], color:'Teal Blue'},
-    {name:'Kianjeru Lower Primary T-Shirt', schools:['kianjeru-cbc'], color:'Teal Blue'},
-    {name:'Kianjeru Boarders T-Shirt', schools:['kianjeru-cbc','kianjeru-jss'], color:'Red'},
-    {name:'Kianjeru JSS T-Shirt', schools:['kianjeru-jss'], color:'Navy Blue'},
-    {name:'Kathituni JSS T-Shirt', schools:['kathituni-jss'], color:'Blue'},
-    {name:'Njeru Junior T-Shirt', schools:['njeru-cbc','njeru-jss'], color:'Red'},
-    {name:'Mururi Boarding T-Shirt', schools:['mururi-cbc','mururi-jss'], color:'Red'},
-    {name:'Black T-Shirt (2)', schools:[], color:'Black'}, // sheet lists "Black" twice (sections 1 & 10) — kept as separate lines/SKUs; rename once the distinction (batch, print, etc.) is known
-    {name:'White T-Shirt', schools:[], color:'White'},
-    {name:'Dark Green T-Shirt', schools:[], color:'Dark Green'},
-    {name:'Kianjeru School T-Shirt', schools:['kianjeru-cbc','kianjeru-jss'], color:'Yellow'},
-    {name:'Bonanza School T-Shirt', schools:['bonanza'], color:'Yellow'},
-    {name:'Translight School T-Shirt', schools:['translight-jss','translight-cbc'], color:'Maroon'},
-    {name:'Kiini Boarding T-Shirt', schools:['kiini-jss','kiini-cbc'], color:'Yellow'}
-  ];
-  const SIZES = ['Age 4','Age 6','Age 8','Age 10','Age 12','Small (Kids)','Medium (Kids)','Large (Kids)','Small (Adult)','Medium (Adult)','Large (Adult)','XL (Adult)','XXL (Adult)'];
-  const COST = 250, PRICE = 500;
-  const products = [];
-  let counter = 1;
-  LINES.forEach(line => {
-    SIZES.forEach(size => {
-      const sku = 'JAM-CHU-TSH-'+String(counter).padStart(4,'0');
-      counter++;
-      products.push({
-        id: uid('prod'),
-        sku,
-        name: line.name,
-        category: 'TSHIRT',
-        schools: line.schools,
-        gender: 'Unisex',
-        size,
-        color: line.color,
-        cost: COST,
-        price: PRICE,
-        stock: 0,
-        minStock: 5,
-        barcode: sku,
-        supplier: 'In-house Production',
-        active: true,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-    });
-  });
-  return products;
-}
 
 function seedDatabase(){
   const schools = schoolDefs();
   schools.slice(0,11).forEach(s=> s.quickAccess = true); // default quick-access set
-  let products = generateDemoProducts(schools);
-  products = mergeSharedProducts(products, schools);
-  products = products.concat(generateTracksuitProducts());
-  // T-shirt stock lines are added by loadDB()'s one-time migration (see generateTshirtStockProducts),
-  // so they're seeded exactly once whether this is a brand-new DB or an existing saved one.
-
+  // No demo stock: the catalogue starts empty and real stock is loaded from Excel
+  // (Products / Inventory -> Import Excel).
+  const products = [];
   const fullSets = {};
-  schools.forEach(school => {
-    const items = products.filter(p => p.category!=='TRACKSUIT' && p.schools.includes(school.id));
-    if(!items.length) return;
-    // build one representative full set: 2x shirt/tshirt/dress-type, 1x everything else, skip ties duplicated
-    const bySize = {};
-    items.forEach(p=>{ if(!bySize[p.category]) bySize[p.category]=p; });
-    const set = [];
-    Object.values(bySize).forEach(p=>{
-      const qty = ['SHIRT','TROUSER','TSHIRT','DRESS','SHORTS','SOCKS'].includes(p.category) ? 2 : 1;
-      set.push({productId:p.id, qty});
-    });
-    fullSets[school.id] = set;
-  });
 
   return {
     settings: freshSettings(),
@@ -724,12 +484,16 @@ function loadDB(){
   if(!DB.settings.usbPrinter) DB.settings.usbPrinter = freshSettings().usbPrinter;
   if(!DB.stockMovements) DB.stockMovements = [];
   if(!DB.fullSets) DB.fullSets = {};
-  // one-time migration: add the T-shirt stock-taking lines to any DB that predates them,
-  // without touching existing products, sales, shifts or other saved data
-  if(!DB.tshirtStockSeeded){
-    DB.products = DB.products.concat(generateTshirtStockProducts());
-    DB.tshirtStockSeeded = true;
+  // one-time wipe of the old demo / placeholder stock so real stock can be loaded from Excel.
+  // Sales, shifts, users, schools and settings are left untouched.
+  if(!DB.stockWiped20261031){
+    DB.products = [];
+    DB.fullSets = {};
+    DB.stockMovements = [];
+    DB.stockWiped20261031 = true;
   }
+  // categories that arrived via an Excel import must show up in the POS filter and product form
+  DB.products.forEach(p=>registerCategory(p.category));
   saveDB();
 }
 function saveDB(){
@@ -1951,6 +1715,7 @@ function renderActiveModal(){
     case 'schoolForm': return renderSchoolFormModal();
     case 'fullSetEditor': return renderFullSetEditorModal();
     case 'stockAdjust': return renderStockAdjustModal();
+    case 'stockImport': return renderStockImportModal();
     case 'viewReceipt': return renderViewReceiptModal();
     case 'closeShift': return renderCloseShiftModal();
     case 'restoreConfirm': return renderRestoreConfirmModal();
@@ -1970,7 +1735,10 @@ function renderProducts(){
   return `
   <div class="section-head">
     <h2>Products (${DB.products.length})</h2>
-    <button class="btn btn-gold" onclick="openProductForm(null)">${icon('plus')}<span>New Product</span></button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${stockImportButtons()}
+      <button class="btn btn-gold" onclick="openProductForm(null)">${icon('plus')}<span>New Product</span></button>
+    </div>
   </div>
   <div class="toolbar">
     <input type="text" placeholder="Search products..." value="${esc(session.prodSearch||'')}" oninput="session.prodSearch=this.value; render();">
@@ -2103,6 +1871,268 @@ function deleteProduct(id){
   p.active=false;
   logActivity(session.user.name, 'Product Deactivated', p.name);
   saveDB(); closeModal(); render();
+}
+
+/* ================= EXCEL STOCK IMPORT (Manager) ================= */
+const IMPORT_COLUMNS = ['Name','Category','Size','Color','Gender','Schools','Cost','Price','Stock','Min Stock','SKU','Barcode','Supplier'];
+const IMPORT_ALIASES = {
+  name:['name','product','productname','item','itemname','description'],
+  category:['category','type','cat','producttype'],
+  size:['size','sizes'],
+  color:['color','colour'],
+  gender:['gender','sex'],
+  schools:['schools','school'],
+  cost:['cost','costprice','buyingprice','buyprice'],
+  price:['price','sellingprice','saleprice','sellprice','retailprice'],
+  stock:['stock','qty','quantity','openingstock','currentstock','count','countedstock','onhand'],
+  minstock:['minstock','minimumstock','reorderlevel','reorder','minqty'],
+  sku:['sku','code','itemcode','productcode'],
+  barcode:['barcode'],
+  supplier:['supplier','vendor']
+};
+function normKey(s){ return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9]/g,''); }
+function defaultMinStock(){ const n = DB.settings && DB.settings.lowStockThreshold; return Number.isFinite(n) ? n : 5; }
+function blankVal(v){ return v==null || String(v).trim()===''; }
+function toNum(v){
+  if(blankVal(v)) return NaN;
+  if(typeof v==='number') return v;
+  return parseFloat(String(v).replace(/[^0-9.\-]/g,''));
+}
+function productKey(o){
+  return [o.name,o.category,o.size,o.color].map(normKey).join('|')+'|'+o.schools.slice().sort().join(',');
+}
+function resolveCategory(raw){
+  const key = normKey(raw), single = key.replace(/s$/,'');
+  for(const c of CATEGORIES){
+    const ck = normKey(c), lk = normKey(CAT_LABEL[c]);
+    if(ck===key || lk===key || ck.replace(/s$/,'')===single || lk.replace(/s$/,'')===single) return c;
+  }
+  return String(raw).trim().toUpperCase(); // a brand-new category
+}
+function resolveSchools(raw){
+  const txt = String(raw==null?'':raw).trim();
+  if(!txt || /^(all( schools)?|general|none|-)$/i.test(txt)) return {ids:[], bad:[]};
+  const ids = [], bad = [];
+  txt.split(/[;,|\n]+/).map(s=>s.trim()).filter(Boolean).forEach(part=>{
+    const k = normKey(part);
+    const s = DB.schools.find(x=>normKey(x.name)===k || normKey(x.short)===k || normKey(x.id)===k);
+    if(!s) bad.push(part);
+    else if(!ids.includes(s.id)) ids.push(s.id);
+  });
+  return {ids, bad};
+}
+function resolveGender(raw){
+  const g = String(raw==null?'':raw).trim().toLowerCase();
+  if(/^(b|boy|m|male)/.test(g)) return 'Boys';
+  if(/^(g|girl|f|female)/.test(g)) return 'Girls';
+  return 'Unisex';
+}
+
+function stockImportButtons(){
+  return `<button class="btn btn-outline" onclick="downloadStockTemplate()">${icon('file-spreadsheet')}<span>Excel Template</span></button>
+          <button class="btn btn-outline" onclick="document.getElementById('stockFile').click()">${icon('upload')}<span>Import Excel</span></button>`;
+}
+
+function downloadStockTemplate(){
+  if(typeof XLSX==='undefined'){ toast('Excel library did not load — check your internet connection and reload.', 'err'); return; }
+  const wb = XLSX.utils.book_new();
+  const stockWs = XLSX.utils.aoa_to_sheet([IMPORT_COLUMNS]);
+  stockWs['!cols'] = IMPORT_COLUMNS.map(c=>({wch: Math.max(12, c.length+4)}));
+  XLSX.utils.book_append_sheet(wb, stockWs, 'Stock');
+  const guide = [
+    ['Column','Required?','Notes'],
+    ['Name','Yes','e.g. School Shirt'],
+    ['Category','Yes','Pick from the list below. A new category is created automatically if it is not listed.'],
+    ['Size','No','e.g. 32. Blank becomes "One Size".'],
+    ['Color','No','e.g. Navy'],
+    ['Gender','No','Boys, Girls or Unisex (blank = Unisex)'],
+    ['Schools','No','School name(s) separated by ; — blank or ALL = general stock shown under All Schools'],
+    ['Cost','No','Buying cost per item (blank = 0)'],
+    ['Price','Yes','Selling price per item, above 0'],
+    ['Stock','No','Counted quantity, whole number (blank = 0)'],
+    ['Min Stock','No','Low-stock alert level (blank = '+defaultMinStock()+')'],
+    ['SKU','No','Leave blank to auto-generate. Re-importing the same SKU updates that product.'],
+    ['Barcode','No','Blank = same as SKU'],
+    ['Supplier','No','Optional'],
+    [],
+    ['Valid categories','Valid school names']
+  ];
+  const n = Math.max(CATEGORIES.length, DB.schools.length);
+  for(let i=0;i<n;i++) guide.push([CATEGORIES[i]?(CAT_LABEL[CATEGORIES[i]]||CATEGORIES[i]):'', DB.schools[i]?DB.schools[i].name:'']);
+  const guideWs = XLSX.utils.aoa_to_sheet(guide);
+  guideWs['!cols'] = [{wch:20},{wch:36},{wch:80}];
+  XLSX.utils.book_append_sheet(wb, guideWs, 'Guide');
+  XLSX.writeFile(wb, 'jamara-stock-template.xlsx');
+}
+
+function parseStockRows(rows){
+  const out = {items:[], errors:[], fatal:null};
+  if(!rows.length){ out.fatal = 'The sheet is empty.'; return out; }
+  const fieldOf = {};
+  Object.keys(rows[0]).forEach(h=>{
+    const k = normKey(h);
+    for(const f in IMPORT_ALIASES){
+      if(IMPORT_ALIASES[f].includes(k) && !Object.values(fieldOf).includes(f)){ fieldOf[h] = f; break; }
+    }
+  });
+  const have = new Set(Object.values(fieldOf));
+  const missing = ['name','category','price'].filter(f=>!have.has(f));
+  if(missing.length){
+    out.fatal = 'Missing column(s): '+missing.map(f=>f[0].toUpperCase()+f.slice(1)).join(', ')+'. Use the Excel Template for the right headings.';
+    return out;
+  }
+  const seenSku = {}, seenBar = {}, seenKey = {};
+  rows.forEach((raw,i)=>{
+    const rowNo = i+2; // row 1 is the header
+    const r = {};
+    for(const h in raw){ const f = fieldOf[h]; if(f) r[f] = raw[h]; }
+    if(Object.values(r).every(blankVal)) return;
+    const errs = [];
+    const name = String(r.name==null?'':r.name).trim();
+    if(!name) errs.push('Name is missing');
+    const catRaw = String(r.category==null?'':r.category).trim();
+    if(!catRaw) errs.push('Category is missing');
+    const category = catRaw ? resolveCategory(catRaw) : '';
+    const price = toNum(r.price);
+    if(!(price>0)) errs.push('Price must be a number above 0');
+    let cost = toNum(r.cost); if(isNaN(cost)) cost = 0; cost = Math.max(0, cost);
+    const stock = blankVal(r.stock) ? 0 : toNum(r.stock);
+    if(isNaN(stock) || stock<0 || stock!==Math.floor(stock)) errs.push('Stock must be a whole number, 0 or more');
+    const minStock = blankVal(r.minstock) ? defaultMinStock() : toNum(r.minstock);
+    if(isNaN(minStock) || minStock<0) errs.push('Min Stock must be a number, 0 or more');
+    const sc = resolveSchools(r.schools);
+    if(sc.bad.length) errs.push('Unknown school: '+sc.bad.join(', '));
+    const sku = String(r.sku==null?'':r.sku).trim();
+    const barcode = String(r.barcode==null?'':r.barcode).trim();
+    const item = {
+      row: rowNo, name, category,
+      size: String(r.size==null?'':r.size).trim() || 'One Size',
+      color: String(r.color==null?'':r.color).trim(),
+      gender: resolveGender(r.gender),
+      schools: sc.ids, cost, price, stock, minStock, sku, barcode,
+      supplier: String(r.supplier==null?'':r.supplier).trim()
+    };
+    item.key = productKey(item);
+    if(sku && seenSku[sku]) errs.push('Duplicate SKU (also on row '+seenSku[sku]+')');
+    if(barcode && seenBar[barcode]) errs.push('Duplicate barcode (also on row '+seenBar[barcode]+')');
+    if(!sku && seenKey[item.key]) errs.push('Same product, size, colour and schools as row '+seenKey[item.key]);
+    if(errs.length){ out.errors.push({row:rowNo, name:name||'(no name)', msg:errs.join('; ')}); return; }
+    if(sku) seenSku[sku] = rowNo; else seenKey[item.key] = rowNo;
+    if(barcode) seenBar[barcode] = rowNo;
+    out.items.push(item);
+  });
+  if(!out.items.length && !out.errors.length) out.fatal = 'No stock rows found under the headings.';
+  return out;
+}
+
+function handleStockFile(input){
+  const file = input.files && input.files[0];
+  input.value = ''; // lets the same file be picked again later
+  if(!file) return;
+  if(typeof XLSX==='undefined'){ toast('Excel reader did not load — check your internet connection and reload.', 'err'); return; }
+  const reader = new FileReader();
+  reader.onerror = ()=> toast('Could not read that file.', 'err');
+  reader.onload = e=>{
+    try{
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const sheetName = wb.SheetNames.find(n=>/^stock$/i.test(n)) || wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {defval:'', raw:true});
+      const parsed = parseStockRows(rows);
+      if(parsed.fatal){ toast(parsed.fatal, 'err'); return; }
+      session.importPreview = {fileName:file.name, items:parsed.items, errors:parsed.errors};
+      session.importMode = session.importMode || 'update';
+      session.activeModal = 'stockImport';
+      render();
+    }catch(err){
+      console.error(err);
+      toast('That file could not be read as an Excel sheet.', 'err');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderStockImportModal(){
+  const imp = session.importPreview;
+  if(!imp) return '';
+  const mode = session.importMode || 'update';
+  const ok = imp.items.length, bad = imp.errors.length;
+  const units = imp.items.reduce((a,i)=>a+i.stock,0);
+  return `
+  <div class="modal-backdrop" onclick="closeModalBackdrop(event)">
+    <div class="modal" style="max-width:760px;">
+      <div class="modal-head"><h3>Import Stock — ${esc(imp.fileName)}</h3><button class="close-x" onclick="closeModal()">${icon('x')}</button></div>
+      <div class="modal-body">
+        <div class="hint" style="margin-bottom:12px;"><b>${ok}</b> product line(s) ready, <b>${units}</b> units in total${bad?` — <b style="color:var(--red);">${bad}</b> row(s) have problems and will be skipped`:''}.</div>
+        <div class="checklist" style="margin-bottom:12px;">
+          <label><input type="radio" name="impMode" value="update" ${mode==='update'?'checked':''} onchange="session.importMode=this.value; render();"> <b>Add / update</b> — new lines are added; a matching SKU is updated and its stock set to the sheet value. Nothing is deleted.</label>
+          <label><input type="radio" name="impMode" value="replace" ${mode==='replace'?'checked':''} onchange="session.importMode=this.value; render();"> <b>Replace all stock</b> — deletes every existing product first, then loads this sheet. Sales history is kept.</label>
+        </div>
+        ${bad?`<div style="margin-bottom:12px;">
+          <label>Rows with problems</label>
+          <div style="max-height:130px;overflow:auto;font-size:12px;border:1px solid var(--border,#ddd);border-radius:8px;padding:8px;">
+            ${imp.errors.slice(0,40).map(e=>`<div style="margin-bottom:3px;"><b>Row ${e.row}</b> ${esc(e.name)} — ${esc(e.msg)}</div>`).join('')}
+            ${bad>40?`<div class="hint">…and ${bad-40} more</div>`:''}
+          </div>
+        </div>`:''}
+        ${ok?`<label>Preview${ok>8?' (first 8 lines)':''}</label>
+        <div style="overflow:auto;">
+          <table>
+            <thead><tr><th>Name</th><th>Category</th><th>Size</th><th>Schools</th><th>Price</th><th>Stock</th></tr></thead>
+            <tbody>${imp.items.slice(0,8).map(i=>`<tr>
+              <td>${esc(i.name)}</td><td>${esc(CAT_LABEL[i.category]||i.category)}</td><td>${esc(i.size)}</td>
+              <td>${i.schools.length?i.schools.map(id=>esc(schoolShort(id))).join(', '):'<span class="hint">All Schools</span>'}</td>
+              <td>${fmt(i.price)}</td><td>${i.stock}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>`:''}
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-muted" onclick="session.importPreview=null; closeModal();">Cancel</button>
+        <button class="btn btn-gold" ${ok?'':'disabled'} onclick="confirmStockImport()">${icon('check')}<span>Import ${ok} line(s)</span></button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function confirmStockImport(){
+  const imp = session.importPreview;
+  if(!imp || !imp.items.length) return;
+  const mode = session.importMode || 'update';
+  if(mode==='replace' && DB.products.length && !confirm('This deletes all '+DB.products.length+' existing products and loads '+imp.items.length+' from the sheet. Continue?')) return;
+  const now = Date.now();
+  if(mode==='replace'){ DB.products = []; DB.fullSets = {}; DB.stockMovements = []; }
+  const skus = new Set(DB.products.map(p=>p.sku));
+  let seq = DB.products.length;
+  const moves = [];
+  let added = 0, updated = 0;
+  imp.items.forEach(it=>{
+    registerCategory(it.category);
+    const existing = it.sku ? DB.products.find(x=>x.sku===it.sku) : DB.products.find(x=>productKey(x)===it.key);
+    if(existing){
+      const prev = existing.stock;
+      Object.assign(existing, {name:it.name, category:it.category, gender:it.gender, size:it.size, color:it.color, cost:it.cost, price:it.price, minStock:it.minStock, schools:it.schools, stock:it.stock, updatedAt:now});
+      if(it.supplier) existing.supplier = it.supplier;
+      if(it.barcode && !DB.products.some(x=>x.barcode===it.barcode && x.id!==existing.id)) existing.barcode = it.barcode;
+      if(prev!==it.stock) moves.push({id:uid('mv'), productId:existing.id, type:'Stock Adjustment', qty:it.stock-prev, prevStock:prev, newStock:it.stock, user:session.user.name, date:now, reason:'Excel import'});
+      updated++;
+    } else {
+      let sku = it.sku;
+      if(!sku){
+        do { seq++; sku = 'JAM-CHU-'+catFrag(it.category)+'-'+String(seq).padStart(4,'0'); } while(skus.has(sku));
+      }
+      skus.add(sku);
+      const barcode = (it.barcode && !DB.products.some(x=>x.barcode===it.barcode)) ? it.barcode : sku;
+      const p = {id:uid('prod'), sku, name:it.name, category:it.category, schools:it.schools, gender:it.gender, size:it.size, color:it.color, cost:it.cost, price:it.price, stock:it.stock, minStock:it.minStock, barcode, supplier:it.supplier||'In-house Production', active:true, createdAt:now, updatedAt:now};
+      DB.products.push(p);
+      if(it.stock>0) moves.push({id:uid('mv'), productId:p.id, type:'Stock Received', qty:it.stock, prevStock:0, newStock:it.stock, user:session.user.name, date:now, reason:'Excel import'});
+      added++;
+    }
+  });
+  DB.stockMovements = moves.reverse().concat(DB.stockMovements);
+  logActivity(session.user.name, 'Stock Imported', added+' added, '+updated+' updated ('+(mode==='replace'?'replace all':'add/update')+') from '+imp.fileName);
+  saveDB();
+  session.importPreview = null;
+  closeModal();
+  toast('Imported '+added+' new and '+updated+' updated product line(s).', 'ok');
 }
 
 /* ================= SCHOOLS (Manager) ================= */
@@ -2244,6 +2274,7 @@ function renderInventory(){
       <option value="">All Schools</option>
       ${DB.schools.map(s=>`<option value="${s.id}" ${schoolFilter===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}
     </select>
+    ${stockImportButtons()}
     <button class="btn btn-outline" onclick="exportCsv('inventory')">${icon('download')}<span>Export CSV</span></button>
   </div>
   <div class="card" style="overflow:auto;max-height:calc(100vh - 220px);">
