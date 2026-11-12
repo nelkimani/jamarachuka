@@ -509,6 +509,42 @@ function logActivity(user, action, details){
   if(DB.activity.length > 800) DB.activity.length = 800;
 }
 
+/* ---------------- Refund & shift accounting helpers ----------------
+   A return or void hands money back, so it has to come out of the shift totals and out of the
+   sales reports. Per-item refunds are tracked in item.refundedAmt; sales made before this was
+   tracked (item.returned set but no refundedAmt) fall back to a price-proportional estimate. */
+function itemRefunded(it){
+  if(it.refundedAmt!=null) return it.refundedAmt;
+  return Math.round(it.total*Math.min(1,(it.returned||0)/(it.qty||1)));
+}
+function itemNet(it){ return Math.max(0, it.total-itemRefunded(it)); }
+function saleRefunded(s){ return s.items.reduce((a,it)=>a+itemRefunded(it),0); }
+function saleNet(s){ return Math.max(0, s.total-saleRefunded(s)); }
+// the sale-level discount is spread across items in proportion to their price
+function saleRefundRatio(s){ return s.subtotal>0 ? s.total/s.subtotal : 1; }
+function shiftRefundsCash(sh){ return sh.refundsCash||0; }
+function shiftRefundsOther(sh){ return (sh.refundsMpesa||0)+(sh.refundsCard||0)+(sh.refundsOther||0); }
+function shiftExpectedCash(sh){ return sh.openingCash+sh.cashSales-shiftRefundsCash(sh); }
+// Cash leaves the drawer that is open now, never a drawer that was already counted and closed.
+function refundShiftFor(sale){
+  const own = sale.shiftId ? DB.shifts.find(s=>s.id===sale.shiftId && s.status==='OPEN') : null;
+  if(own) return own;
+  return DB.shifts.find(s=>s.cashier===sale.cashier && s.status==='OPEN')
+      || DB.shifts.find(s=>s.status==='OPEN')
+      || null;
+}
+function recordRefund(sale, method, amount, shift, lines){
+  if(!sale.refunds) sale.refunds = [];
+  sale.refunds.push({ id:uid('ref'), at:Date.now(), by:session.user.name, method, amount, shiftId: shift?shift.id:null, lines });
+  if(shift && amount>0){
+    if(method==='CASH') shift.refundsCash = (shift.refundsCash||0)+amount;
+    else if(method==='MPESA') shift.refundsMpesa = (shift.refundsMpesa||0)+amount;
+    else if(method==='CARD') shift.refundsCard = (shift.refundsCard||0)+amount;
+    else shift.refundsOther = (shift.refundsOther||0)+amount;
+    shift.expectedCash = shiftExpectedCash(shift);
+  }
+}
+
 /* ---------------- Session state ---------------- */
 let session = {
   user: null,          // {id,name,role}
@@ -792,19 +828,19 @@ function withinRange(ts, range){
 
 function renderDashboard(){
   const todaySales = DB.sales.filter(s=>withinRange(s.createdAt,'today') && s.status!=='VOIDED');
-  const totalToday = todaySales.reduce((a,s)=>a+s.total,0);
-  const itemsSold = todaySales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.qty,0),0);
+  const totalToday = todaySales.reduce((a,s)=>a+saleNet(s),0);
+  const itemsSold = todaySales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+i.qty-(i.returned||0),0),0);
   const lowStock = DB.products.filter(p=>p.active && p.stock>0 && p.stock<=p.minStock).length;
   const outStock = DB.products.filter(p=>p.active && p.stock<=0).length;
-  const cash = todaySales.filter(s=>s.paymentMethod==='CASH').reduce((a,s)=>a+s.total,0);
-  const mpesa = todaySales.filter(s=>s.paymentMethod==='MPESA').reduce((a,s)=>a+s.total,0);
-  const card = todaySales.filter(s=>s.paymentMethod==='CARD').reduce((a,s)=>a+s.total,0);
+  const cash = todaySales.filter(s=>s.paymentMethod==='CASH').reduce((a,s)=>a+saleNet(s),0);
+  const mpesa = todaySales.filter(s=>s.paymentMethod==='MPESA').reduce((a,s)=>a+saleNet(s),0);
+  const card = todaySales.filter(s=>s.paymentMethod==='CARD').reduce((a,s)=>a+saleNet(s),0);
 
   const bySchool = {};
-  todaySales.forEach(s=> s.items.forEach(it=>{ bySchool[it.school]=(bySchool[it.school]||0)+it.total; }));
+  todaySales.forEach(s=> s.items.forEach(it=>{ bySchool[it.school]=(bySchool[it.school]||0)+itemNet(it); }));
   const topSchool = Object.entries(bySchool).sort((a,b)=>b[1]-a[1])[0];
   const byProduct = {};
-  todaySales.forEach(s=> s.items.forEach(it=>{ byProduct[it.name]=(byProduct[it.name]||0)+it.qty; }));
+  todaySales.forEach(s=> s.items.forEach(it=>{ byProduct[it.name]=(byProduct[it.name]||0)+(it.qty-(it.returned||0)); }));
   const topProduct = Object.entries(byProduct).sort((a,b)=>b[1]-a[1])[0];
 
   setTimeout(()=>drawDashboardCharts(), 30);
@@ -853,7 +889,7 @@ function drawDashboardCharts(){
   for(let i=6;i>=0;i--){
     const d = new Date(); d.setDate(d.getDate()-i);
     days.push(d.toLocaleDateString('en-GB',{weekday:'short'}));
-    const total = validSales.filter(s=>new Date(s.createdAt).toDateString()===d.toDateString()).reduce((a,s)=>a+s.total,0);
+    const total = validSales.filter(s=>new Date(s.createdAt).toDateString()===d.toDateString()).reduce((a,s)=>a+saleNet(s),0);
     dayTotals.push(total);
   }
   const c1 = document.getElementById('chartDaily');
@@ -861,13 +897,13 @@ function drawDashboardCharts(){
 
   // Category this month
   const catTotals = {};
-  validSales.filter(s=>withinRange(s.createdAt,'month')).forEach(s=> s.items.forEach(it=>{ catTotals[it.category]=(catTotals[it.category]||0)+it.total; }));
+  validSales.filter(s=>withinRange(s.createdAt,'month')).forEach(s=> s.items.forEach(it=>{ catTotals[it.category]=(catTotals[it.category]||0)+itemNet(it); }));
   const c2 = document.getElementById('chartCategory');
   if(c2){ killChart('cat'); chartInstances.cat = new Chart(c2, {type:'doughnut', data:{labels:Object.keys(catTotals).map(k=>CAT_LABEL[k]||k), datasets:[{data:Object.values(catTotals), backgroundColor:['#6d1a34','#9c2d4c','#c8952c','#1f7a4d','#b3372c','#6b7280','#e0ac3f','#7a5cff','#2fa3c2','#c26b3c','#4f9c7c','#c2c23c','#3c65c2','#8a5a2f']}]}, options:{plugins:{legend:{position:'bottom', labels:{boxWidth:10,font:{size:10}}}}}}); }
 
   // School this month
   const schoolTotals = {};
-  validSales.filter(s=>withinRange(s.createdAt,'month')).forEach(s=> s.items.forEach(it=>{ schoolTotals[it.school]=(schoolTotals[it.school]||0)+it.total; }));
+  validSales.filter(s=>withinRange(s.createdAt,'month')).forEach(s=> s.items.forEach(it=>{ schoolTotals[it.school]=(schoolTotals[it.school]||0)+itemNet(it); }));
   const sortedSchools = Object.entries(schoolTotals).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const c3 = document.getElementById('chartSchool');
   if(c3){ killChart('school'); chartInstances.school = new Chart(c3, {type:'bar', data:{labels:sortedSchools.map(s=>s[0]), datasets:[{label:'Sales', data:sortedSchools.map(s=>s[1]), backgroundColor:'#c8952c'}]}, options:{indexAxis:'y', plugins:{legend:{display:false}}}}); }
@@ -878,7 +914,7 @@ function drawDashboardCharts(){
     const end = new Date(); end.setDate(end.getDate()-(i*7));
     const start = new Date(end); start.setDate(start.getDate()-6);
     wLabels.push('W'+(6-i));
-    const total = validSales.filter(s=>{ const t=new Date(s.createdAt); return t>=start && t<=end; }).reduce((a,s)=>a+s.total,0);
+    const total = validSales.filter(s=>{ const t=new Date(s.createdAt); return t>=start && t<=end; }).reduce((a,s)=>a+saleNet(s),0);
     wTotals.push(total);
   }
   const c4 = document.getElementById('chartWeekly');
@@ -1019,6 +1055,7 @@ function openShift(){
   const shift = {
     id: uid('shift'), cashier: session.user.name, openedAt: Date.now(), closedAt:null,
     openingCash: val, cashSales:0, mpesaSales:0, cardSales:0, otherSales:0, transactions:0,
+    refundsCash:0, refundsMpesa:0, refundsCard:0, refundsOther:0,
     expectedCash:val, actualCash:null, difference:null, status:'OPEN'
   };
   DB.shifts.unshift(shift);
@@ -1396,6 +1433,9 @@ function updatePaymentModal(){
   if(el){ el.outerHTML = renderPaymentModal(); if(window.lucide) lucide.createIcons(); }
 }
 function completeSale(){
+  // A second tap on "Complete Sale" lands after the first one already emptied the cart; without
+  // this it would record a KSh 0 sale with no items.
+  if(!session.cart.length){ toast('The cart is empty.', 'err'); return; }
   const total = cartTotal();
   const method = session.payMethod||'CASH';
   if(method==='CASH'){
@@ -1403,6 +1443,21 @@ function completeSale(){
     if(received<total){ toast('Cash received is less than the total.', 'err'); return; }
   }
   if(method==='MPESA' && !session.mpesaCode.trim()){ toast('M-PESA transaction code is required.', 'err'); return; }
+
+  // Re-check stock right now. The cart can be stale: a held sale was resumed, an item was
+  // deactivated, or stock was adjusted/imported after the item was added to the cart.
+  const problems = [];
+  session.cart.forEach(c=>{
+    const p = DB.products.find(x=>x.id===c.productId);
+    if(!p) problems.push(c.name+' is no longer in the product list');
+    else if(p.active===false) problems.push(c.name+' ('+c.size+') has been deactivated');
+    else if(p.stock < c.qty) problems.push(c.name+' ('+c.size+'): only '+p.stock+' in stock, '+c.qty+' in the cart');
+  });
+  if(problems.length){
+    closeModal();
+    toast(problems[0]+(problems.length>1?' (+'+(problems.length-1)+' more)':'')+'. Fix the cart and try again.', 'err');
+    return;
+  }
 
   // Deduct stock & build sale record
   const sub = cartSubtotal(), disc = cartDiscount();
@@ -1414,7 +1469,8 @@ function completeSale(){
     const p = DB.products.find(x=>x.id===it.productId);
     if(p){
       const prev = p.stock;
-      p.stock = Math.max(0, p.stock-it.qty);
+      p.stock = p.stock-it.qty;   // validated above, so this can never go below zero
+      p.updatedAt = Date.now();
       DB.stockMovements.unshift({id:uid('mv'), productId:p.id, type:'Sale', qty:-it.qty, prevStock:prev, newStock:p.stock, user:session.user.name, date:Date.now(), reason:'Sale '+receiptNo});
     }
   });
@@ -1425,7 +1481,7 @@ function completeSale(){
     discountApprovedBy: session.discountApprovedBy||null,
     total, paymentMethod: method, mpesaCode: method==='MPESA'?session.mpesaCode.trim().toUpperCase():null,
     cashReceived: method==='CASH'?parseFloat(session.cashReceived)||0:null,
-    status:'COMPLETED'
+    status:'COMPLETED', shiftId: session.shift||null
   };
   DB.sales.unshift(sale);
 
@@ -1436,7 +1492,7 @@ function completeSale(){
     else if(method==='MPESA') shift.mpesaSales+=total;
     else if(method==='CARD') shift.cardSales+=total;
     else shift.otherSales+=total;
-    shift.expectedCash = shift.openingCash+shift.cashSales;
+    shift.expectedCash = shiftExpectedCash(shift);
   }
 
   logActivity(session.user.name, 'Sale', 'Receipt '+receiptNo+' — '+fmt(total));
@@ -2328,8 +2384,9 @@ function saveStockAdjust(id){
   const qty = parseInt(document.getElementById('saQty').value);
   const reason = document.getElementById('saReason').value.trim();
   if(!qty){ toast('Enter a non-zero quantity.', 'err'); return; }
+  if(p.stock+qty<0){ toast('Cannot remove '+(-qty)+' — only '+p.stock+' in stock.', 'err'); return; }
   const prev = p.stock;
-  p.stock = Math.max(0, p.stock+qty);
+  p.stock = p.stock+qty;
   p.updatedAt = Date.now();
   DB.stockMovements.unshift({id:uid('mv'), productId:p.id, type, qty, prevStock:prev, newStock:p.stock, user:session.user.name, date:Date.now(), reason});
   logActivity(session.user.name, 'Stock Adjusted', p.name+' ('+(qty>0?'+':'')+qty+')');
@@ -2360,7 +2417,7 @@ function renderSales(){
             <td>${dateDisplay(s.createdAt)}</td><td>${timeDisplay(s.createdAt)}</td>
             <td>${esc(s.cashier)}</td>
             <td>${s.items.reduce((a,i)=>a+i.qty,0)}</td>
-            <td>${fmt(s.total)}</td>
+            <td>${fmt(s.total)}${s.status!=='VOIDED' && saleRefunded(s)?`<div class="hint">Refunded ${fmt(saleRefunded(s))}</div>`:''}</td>
             <td>${s.paymentMethod}</td>
             <td class="${s.status==='VOIDED'?'status-out':s.status==='COMPLETED'?'status-instock':'status-low'}">${s.status}</td>
             <td><button class="btn btn-muted" style="padding:6px 10px;" onclick="viewReceipt('${s.id}')">${icon('eye')}</button></td>
@@ -2433,68 +2490,120 @@ function renderReturns(){
     </table>
   </div>`;
 }
-function openReturnTx(id){ session.returningSaleId=id; session.activeModal='returnTx'; render(); }
+function openReturnTx(id){
+  const sale = DB.sales.find(s=>s.id===id);
+  session.returningSaleId = id;
+  session.refundMethod = sale ? (sale.paymentMethod||'CASH') : 'CASH';   // default: pay back the way they paid
+  session.activeModal = 'returnTx';
+  render();
+}
 function renderReturnTxModal(){
   const sale = DB.sales.find(s=>s.id===session.returningSaleId);
+  const method = session.refundMethod || sale.paymentMethod || 'CASH';
+  const ratio = saleRefundRatio(sale);
+  const refunded = saleRefunded(sale);
+  const voided = sale.status==='VOIDED';
+  const owed = Math.max(0, sale.total-refunded);
   return `
   <div class="modal-backdrop" onclick="closeModalBackdrop(event)">
-    <div class="modal" style="max-width:520px;">
+    <div class="modal" style="max-width:560px;">
       <div class="modal-head"><h3>Manage — ${esc(sale.receiptNo)}</h3><button class="close-x" onclick="closeModal()">${icon('x')}</button></div>
       <div class="modal-body">
+        <label>Refund paid out as</label>
+        <select onchange="session.refundMethod=this.value" style="margin-bottom:12px;" ${voided?'disabled':''}>
+          ${[['CASH','Cash'],['MPESA','M-PESA'],['CARD','Card'],['OTHER','Other']].map(([v,l])=>`<option value="${v}" ${method===v?'selected':''}>${l}${v===sale.paymentMethod?' (original payment)':''}</option>`).join('')}
+        </select>
         <table style="margin-bottom:14px;">
-          <thead><tr><th>Item</th><th>Qty</th><th>Total</th><th></th></tr></thead>
+          <thead><tr><th>Item</th><th>Qty</th><th>Return qty</th><th></th></tr></thead>
           <tbody>
-            ${sale.items.map((it,i)=>`
+            ${sale.items.map((it,i)=>{
+              const remaining = it.qty-(it.returned||0);
+              const unit = Math.round(it.total*ratio/it.qty);
+              return `
               <tr>
-                <td>${esc(it.name)}<div class="hint">${esc(it.school)} · ${esc(it.size)}</div></td>
+                <td>${esc(it.name)}<div class="hint">${esc(it.school)} · ${esc(it.size)} · refunds ${fmt(unit)} each</div></td>
                 <td>${it.qty}${it.returned?` <span class="status-out">(${it.returned} returned)</span>`:''}</td>
-                <td>${fmt(it.total)}</td>
-                <td><button class="btn btn-muted" style="padding:5px 9px;font-size:11px;" onclick="returnSingleItem('${sale.id}', ${i})" ${it.returned>=it.qty?'disabled':''}>Return 1</button></td>
-              </tr>`).join('')}
+                <td>${remaining>0 && !voided ? `<input type="number" id="retQty_${i}" min="1" max="${remaining}" value="1" style="width:64px;padding:6px 8px;">` : '—'}</td>
+                <td><button class="btn btn-muted" style="padding:5px 9px;font-size:11px;" onclick="returnItem('${sale.id}', ${i})" ${remaining<=0||voided?'disabled':''}>Refund</button></td>
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
-        <div class="hint">Total: ${fmt(sale.total)} · Status: <b>${sale.status}</b></div>
+        <div class="hint">Total: ${fmt(sale.total)} · Refunded: ${fmt(refunded)} · Net: <b>${fmt(owed)}</b> · Status: <b>${sale.status}</b></div>
       </div>
       <div class="modal-foot">
-        <button class="btn btn-danger" style="margin-right:auto;" onclick="voidTransaction('${sale.id}')" ${sale.status==='VOIDED'?'disabled':''}>${icon('ban')}<span>Void Entire Transaction</span></button>
+        <button class="btn btn-danger" style="margin-right:auto;" onclick="voidTransaction('${sale.id}')" ${voided?'disabled':''}>${icon('ban')}<span>Void Entire Transaction</span></button>
         <button class="btn btn-muted" onclick="closeModal()">Close</button>
       </div>
     </div>
   </div>`;
 }
-function returnSingleItem(saleId, idx){
+function returnItem(saleId, idx){
   const sale = DB.sales.find(s=>s.id===saleId);
+  if(!sale || sale.status==='VOIDED') return;
   const item = sale.items[idx];
-  item.returned = (item.returned||0)+1;
+  const remaining = item.qty-(item.returned||0);
+  const input = document.getElementById('retQty_'+idx);
+  const qty = Math.floor(Number(input ? input.value : 1));
+  if(!(qty>=1) || qty>remaining){ toast('Enter a quantity between 1 and '+remaining+'.', 'err'); return; }
+
+  const method = session.refundMethod || sale.paymentMethod || 'CASH';
+  const already = itemRefunded(item);
+  const share = Math.round(item.total*saleRefundRatio(sale));   // what this line is worth after its share of any discount
+  // the final unit(s) take whatever is left, so repeated returns never drift by a shilling
+  const amount = (item.returned||0)+qty>=item.qty ? Math.max(0, share-already) : Math.round(share*qty/item.qty);
+  const shift = refundShiftFor(sale);
+  if(method==='CASH' && amount>0 && !shift && !confirm('No shift is open, so this cash refund of '+fmt(amount)+' will not be counted in any drawer. Continue?')) return;
+
+  item.returned = (item.returned||0)+qty;
+  item.refundedAmt = already+amount;
   const p = DB.products.find(x=>x.id===item.productId);
   if(p){
     const prev = p.stock;
-    p.stock += 1;
-    DB.stockMovements.unshift({id:uid('mv'), productId:p.id, type:'Return', qty:1, prevStock:prev, newStock:p.stock, user:session.user.name, date:Date.now(), reason:'Return on '+sale.receiptNo});
+    p.stock += qty;
+    p.updatedAt = Date.now();
+    DB.stockMovements.unshift({id:uid('mv'), productId:p.id, type:'Return', qty:qty, prevStock:prev, newStock:p.stock, user:session.user.name, date:Date.now(), reason:'Return on '+sale.receiptNo});
   }
+  recordRefund(sale, method, amount, shift, [{idx, qty}]);
   const allReturned = sale.items.every(it=>(it.returned||0)>=it.qty);
   const anyReturned = sale.items.some(it=>(it.returned||0)>0);
   sale.status = allReturned ? 'RETURNED' : (anyReturned ? 'PARTIALLY RETURNED' : 'COMPLETED');
-  logActivity(session.user.name, 'Item Returned', item.name+' from '+sale.receiptNo);
+  logActivity(session.user.name, 'Item Returned', qty+' x '+item.name+' from '+sale.receiptNo+' — refunded '+fmt(amount)+' ('+method+')');
   saveDB();
   const el = document.querySelector('.modal-backdrop');
   if(el){ el.outerHTML = renderReturnTxModal(); if(window.lucide) lucide.createIcons(); }
+  toast('Refunded '+fmt(amount)+' via '+method+'.', 'ok');
 }
 function voidTransaction(saleId){
   const sale = DB.sales.find(s=>s.id===saleId);
+  if(!sale || sale.status==='VOIDED') return;
+  const method = session.refundMethod || sale.paymentMethod || 'CASH';
+  const owed = Math.max(0, sale.total-saleRefunded(sale));
+  const units = sale.items.reduce((a,it)=>a+(it.qty-(it.returned||0)),0);
+  const shift = refundShiftFor(sale);
+  let msg = 'Void '+sale.receiptNo+'?\n\n'+units+' item(s) go back into stock'+(owed>0 ? ' and '+fmt(owed)+' is refunded via '+method+'.' : '.');
+  if(owed>0 && method==='CASH' && !shift) msg += '\n\nNo shift is open, so this cash refund will not be counted in any drawer.';
+  if(!confirm(msg)) return;
+
+  const ratio = saleRefundRatio(sale);
   sale.items.forEach(it=>{
     const remaining = it.qty-(it.returned||0);
-    if(remaining<=0) return;
-    const p = DB.products.find(x=>x.id===it.productId);
-    if(p){
-      const prev = p.stock;
-      p.stock += remaining;
-      DB.stockMovements.unshift({id:uid('mv'), productId:p.id, type:'Stock Adjustment', qty:remaining, prevStock:prev, newStock:p.stock, user:session.user.name, date:Date.now(), reason:'Void '+sale.receiptNo});
+    if(remaining>0){
+      const p = DB.products.find(x=>x.id===it.productId);
+      if(p){
+        const prev = p.stock;
+        p.stock += remaining;
+        p.updatedAt = Date.now();
+        DB.stockMovements.unshift({id:uid('mv'), productId:p.id, type:'Stock Adjustment', qty:remaining, prevStock:prev, newStock:p.stock, user:session.user.name, date:Date.now(), reason:'Void '+sale.receiptNo});
+      }
     }
     it.returned = it.qty;
+    it.refundedAmt = Math.max(itemRefunded(it), Math.round(it.total*ratio));
   });
+  if(owed>0) recordRefund(sale, method, owed, shift, []);
   sale.status = 'VOIDED';
-  logActivity(session.user.name, 'Transaction Voided', sale.receiptNo);
+  sale.voidedAt = Date.now(); sale.voidedBy = session.user.name;
+  logActivity(session.user.name, 'Transaction Voided', sale.receiptNo+(owed>0 ? ' — refunded '+fmt(owed)+' ('+method+')' : ''));
   saveDB(); closeModal(); render();
 }
 
@@ -2507,7 +2616,7 @@ function renderShiftsScreen(){
   </div>
   <div class="card" style="overflow:auto;max-height:calc(100vh - 190px);">
     <table>
-      <thead><tr><th>Cashier</th><th>Opened</th><th>Closed</th><th>Opening Cash</th><th>Cash Sales</th><th>M-Pesa</th><th>Card</th><th>Txns</th><th>Expected</th><th>Actual</th><th>Diff</th><th>Status</th></tr></thead>
+      <thead><tr><th>Cashier</th><th>Opened</th><th>Closed</th><th>Opening Cash</th><th>Cash Sales</th><th>M-Pesa</th><th>Card</th><th>Cash Refunds</th><th>Txns</th><th>Expected</th><th>Actual</th><th>Diff</th><th>Status</th></tr></thead>
       <tbody>
         ${list.map(s=>`
           <tr>
@@ -2515,6 +2624,7 @@ function renderShiftsScreen(){
             <td>${dateDisplay(s.openedAt)} ${timeDisplay(s.openedAt)}</td>
             <td>${s.closedAt?dateDisplay(s.closedAt)+' '+timeDisplay(s.closedAt):'—'}</td>
             <td>${fmt(s.openingCash)}</td><td>${fmt(s.cashSales)}</td><td>${fmt(s.mpesaSales)}</td><td>${fmt(s.cardSales)}</td>
+            <td>${shiftRefundsCash(s)?'−'+fmt(shiftRefundsCash(s)):fmt(0)}${shiftRefundsOther(s)?`<div class="hint">+${fmt(shiftRefundsOther(s))} other</div>`:''}</td>
             <td>${s.transactions}</td>
             <td>${fmt(s.expectedCash)}</td>
             <td>${s.actualCash!=null?fmt(s.actualCash):'—'}</td>
@@ -2543,6 +2653,11 @@ function renderMyShift(){
     <div class="stat-card"><div class="stat-label">Other</div><div class="stat-val">${fmt(shift.otherSales)}</div></div>
     <div class="stat-card"><div class="stat-label">Total Sales</div><div class="stat-val">${fmt(shift.cashSales+shift.mpesaSales+shift.cardSales+shift.otherSales)}</div></div>
   </div>
+  <div class="stat-grid">
+    <div class="stat-card ${shiftRefundsCash(shift)?'warn':''}"><div class="stat-label">Cash Refunds</div><div class="stat-val">${fmt(shiftRefundsCash(shift))}</div></div>
+    <div class="stat-card"><div class="stat-label">Other Refunds</div><div class="stat-val">${fmt(shiftRefundsOther(shift))}</div></div>
+    <div class="stat-card"><div class="stat-label">Net Sales</div><div class="stat-val">${fmt(shift.cashSales+shift.mpesaSales+shift.cardSales+shift.otherSales-shiftRefundsCash(shift)-shiftRefundsOther(shift))}</div></div>
+  </div>
   <button class="btn btn-danger btn-lg" onclick="openModal('closeShift')">${icon('log-out')}<span>Close Shift</span></button>`;
 }
 function renderCloseShiftModal(){
@@ -2552,7 +2667,8 @@ function renderCloseShiftModal(){
     <div class="modal" style="max-width:400px;">
       <div class="modal-head"><h3>Close Shift</h3><button class="close-x" onclick="closeModal()">${icon('x')}</button></div>
       <div class="modal-body">
-        <div class="tot-row"><span>Expected Cash</span><span><b>${fmt(shift.expectedCash)}</b></span></div>
+        <div class="tot-row"><span>Expected Cash</span><span><b>${fmt(shiftExpectedCash(shift))}</b></span></div>
+        ${shiftRefundsCash(shift)?`<div class="hint">Already reduced by ${fmt(shiftRefundsCash(shift))} of cash refunds.</div>`:''}
         <label style="margin-top:10px;">Actual Cash Counted</label>
         <input type="number" id="actualCashInput" placeholder="Count the drawer...">
       </div>
@@ -2567,6 +2683,7 @@ function closeShiftConfirm(){
   const shift = currentShiftObj();
   const actual = parseFloat(document.getElementById('actualCashInput').value)||0;
   shift.actualCash = actual;
+  shift.expectedCash = shiftExpectedCash(shift);
   shift.difference = actual-shift.expectedCash;
   shift.closedAt = Date.now();
   shift.status = 'CLOSED';
@@ -2582,10 +2699,10 @@ function renderReports(){
   const range = session.reportRange||'today';
   const valid = DB.sales.filter(s=>s.status!=='VOIDED' && withinRange(s.createdAt, range));
   const bySchool = {};
-  valid.forEach(s=> s.items.forEach(it=>{ bySchool[it.school]=(bySchool[it.school]||0)+it.total; }));
+  valid.forEach(s=> s.items.forEach(it=>{ bySchool[it.school]=(bySchool[it.school]||0)+itemNet(it); }));
   const sortedSchools = Object.entries(bySchool).sort((a,b)=>b[1]-a[1]);
   const byCat = {};
-  valid.forEach(s=> s.items.forEach(it=>{ byCat[it.category]=(byCat[it.category]||0)+it.total; }));
+  valid.forEach(s=> s.items.forEach(it=>{ byCat[it.category]=(byCat[it.category]||0)+itemNet(it); }));
 
   setTimeout(()=>drawReportChart(sortedSchools), 30);
 
@@ -2864,8 +2981,8 @@ function downloadCsv(filename, rows){
 }
 function exportCsv(type){
   if(type==='sales'){
-    const rows = [['Receipt#','Date','Time','Cashier','Items','Total','Payment','Status']];
-    DB.sales.forEach(s=>rows.push([s.receiptNo, dateDisplay(s.createdAt), timeDisplay(s.createdAt), s.cashier, s.items.reduce((a,i)=>a+i.qty,0), s.total, s.paymentMethod, s.status]));
+    const rows = [['Receipt#','Date','Time','Cashier','Items','Total','Payment','Refunded','Status']];
+    DB.sales.forEach(s=>rows.push([s.receiptNo, dateDisplay(s.createdAt), timeDisplay(s.createdAt), s.cashier, s.items.reduce((a,i)=>a+i.qty,0), s.total, s.paymentMethod, saleRefunded(s), s.status]));
     downloadCsv('sales-'+todayStr()+'.csv', rows);
   } else if(type==='inventory' || type==='products'){
     const rows = [['SKU','Name','Category','Schools','Size','Color','Cost','Price','Stock','MinStock','Status']];
@@ -2874,7 +2991,7 @@ function exportCsv(type){
   } else if(type==='schoolSales'){
     const rows = [['School','Total Sales']];
     const bySchool = {};
-    DB.sales.filter(s=>s.status!=='VOIDED').forEach(s=>s.items.forEach(it=>{ bySchool[it.school]=(bySchool[it.school]||0)+it.total; }));
+    DB.sales.filter(s=>s.status!=='VOIDED').forEach(s=>s.items.forEach(it=>{ bySchool[it.school]=(bySchool[it.school]||0)+itemNet(it); }));
     Object.entries(bySchool).forEach(([n,v])=>rows.push([n,v]));
     downloadCsv('school-sales-'+todayStr()+'.csv', rows);
   } else if(type==='movements'){
@@ -2882,8 +2999,8 @@ function exportCsv(type){
     DB.stockMovements.forEach(m=>{ const p=DB.products.find(x=>x.id===m.productId); rows.push([dateDisplay(m.date)+' '+timeDisplay(m.date), p?p.name:m.productId, m.type, m.qty, m.prevStock, m.newStock, m.user, m.reason]); });
     downloadCsv('stock-movements-'+todayStr()+'.csv', rows);
   } else if(type==='shifts'){
-    const rows = [['Cashier','Opened','Closed','OpeningCash','CashSales','MpesaSales','CardSales','Transactions','Expected','Actual','Difference','Status']];
-    DB.shifts.forEach(s=>rows.push([s.cashier, dateDisplay(s.openedAt)+' '+timeDisplay(s.openedAt), s.closedAt?dateDisplay(s.closedAt)+' '+timeDisplay(s.closedAt):'', s.openingCash, s.cashSales, s.mpesaSales, s.cardSales, s.transactions, s.expectedCash, s.actualCash, s.difference, s.status]));
+    const rows = [['Cashier','Opened','Closed','OpeningCash','CashSales','MpesaSales','CardSales','CashRefunds','OtherRefunds','Transactions','Expected','Actual','Difference','Status']];
+    DB.shifts.forEach(s=>rows.push([s.cashier, dateDisplay(s.openedAt)+' '+timeDisplay(s.openedAt), s.closedAt?dateDisplay(s.closedAt)+' '+timeDisplay(s.closedAt):'', s.openingCash, s.cashSales, s.mpesaSales, s.cardSales, shiftRefundsCash(s), shiftRefundsOther(s), s.transactions, s.expectedCash, s.actualCash, s.difference, s.status]));
     downloadCsv('shifts-'+todayStr()+'.csv', rows);
   }
   logActivity(session.user.name, 'CSV Exported', type);
