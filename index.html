@@ -437,7 +437,17 @@ function schoolDefs(){
     {id:'brightrose-jss', name:'Bright Rose Academy JSS', short:'Bright Rose JSS', level:'JSS', gender:'Unisex'},
     {id:'brightrose-cbc', name:'Bright Rose Academy CBC', short:'Bright Rose CBC', level:'CBC', gender:'Unisex'},
     {id:'kiini-jss', name:'Kiini Boarding JSS', short:'Kiini JSS', level:'JSS', gender:'Unisex'},
-    {id:'kiini-cbc', name:'Kiini Boarding CBC', short:'Kiini CBC', level:'CBC', gender:'Unisex'}
+    {id:'kiini-cbc', name:'Kiini Boarding CBC', short:'Kiini CBC', level:'CBC', gender:'Unisex'},
+    {id:'minugu-cbc', name:'Minugu CBC', short:'Minugu CBC', level:'CBC', gender:'Unisex'},
+    {id:'chogoria-girls', name:'Chogoria Girls Senior', short:'Chogoria Girls', level:'Secondary', gender:'Girls'},
+    {id:'muthambi-boys', name:'Muthambi Boys', short:'Muthambi Boys', level:'Secondary', gender:'Boys'},
+    {id:'muthambi-girls', name:'Muthambi Girls', short:'Muthambi Girls', level:'Secondary', gender:'Girls'},
+    {id:'kiriani-boys', name:'Kiriani Boys', short:'Kiriani Boys', level:'Secondary', gender:'Boys'},
+    {id:'iruma-girls', name:'Iruma Girls', short:'Iruma Girls', level:'Secondary', gender:'Girls'},
+    {id:'stmarys-girls', name:'St Marys Girls', short:'St Marys Girls', level:'Secondary', gender:'Girls'},
+    {id:'kajiunduthi-high', name:'Kajiunduthi High', short:'Kajiunduthi High', level:'Secondary', gender:'Unisex'},
+    {id:'kiamaogo-senior', name:'Kiamaogo Senior School', short:'Kiamaogo Senior', level:'Secondary', gender:'Unisex'},
+    {id:'kmtc', name:'KMTC', short:'KMTC', level:'Secondary', gender:'Unisex'}
   ].map(s => Object.assign(s,{active:true, location:'Chuka, Tharaka-Nithi', notes:''}));
 }
 
@@ -491,6 +501,13 @@ function loadDB(){
     DB.fullSets = {};
     DB.stockMovements = [];
     DB.stockWiped20261031 = true;
+  }
+  // one-time: add schools introduced after this browser's data was first created. Existing schools,
+  // products, sales and settings are left untouched.
+  if(!DB.schoolsAdded20261112){
+    const have = new Set(DB.schools.map(x=>x.id));
+    schoolDefs().forEach(d=>{ if(!have.has(d.id)) DB.schools.push(d); });
+    DB.schoolsAdded20261112 = true;
   }
   // categories that arrived via an Excel import must show up in the POS filter and product form
   DB.products.forEach(p=>registerCategory(p.category));
