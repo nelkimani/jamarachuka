@@ -1089,7 +1089,7 @@ function renderProductCard(p){
     <div class="pc-cat">${CAT_LABEL[p.category]||p.category}</div>
     <div class="pc-name">${esc(p.name)}</div>
     <div class="pc-meta">${esc(p.schools.length>1 ? p.schools.length+' schools' : schoolShort(p.schools[0]))}</div>
-    <div class="pc-meta">${esc(p.gender)} • Size ${esc(p.size)} • ${esc(p.color)}</div>
+    <div class="pc-meta">Size ${esc(p.size)}${p.color?' • '+esc(p.color):''}</div>
     <div class="pc-bottom">
       <div class="pc-price">${fmt(p.price)}</div>
       ${oos ? `<div class="pc-oos-tag">OUT OF STOCK</div>` : `<div class="pc-stock ${status==='low'?'status-low':''} ${status==='out'?'status-out':''}">Stock: ${p.stock}</div>`}
