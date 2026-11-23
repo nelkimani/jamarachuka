@@ -1481,7 +1481,7 @@ function stockStatus(p){
 }
 function productMatchesFilters(p){
   if(!p.active) return false;
-  if(session.selectedSchoolId && !p.schools.includes(session.selectedSchoolId)) return false;
+  if(session.selectedSchoolId && !productForSchool(p, session.selectedSchoolId)) return false;
   if(session.selectedCategory!=='ALL' && p.category!==session.selectedCategory) return false;
   if(session.filterSize && p.size!==session.filterSize) return false;
   if(session.filterGender && p.gender!==session.filterGender) return false;
@@ -1496,6 +1496,14 @@ function productMatchesFilters(p){
 }
 function schoolName(id){ const s=DB.schools.find(x=>x.id===id); return s?s.name:id; }
 function schoolShort(id){ const s=DB.schools.find(x=>x.id===id); return s?s.short:id; }
+/* A product does not have to belong to a school. One with no school is a general item (socks, ties...)
+   that applies to every school: it stays visible when a school is picked and is labelled "General". */
+const GENERAL_LABEL = 'General';
+function productForSchool(p, schoolId){ return !p.schools.length || p.schools.includes(schoolId); }
+function schoolLabel(p){
+  if(!p.schools.length) return GENERAL_LABEL;
+  return p.schools.length>1 ? p.schools.map(schoolShort).join(', ') : schoolName(p.schools[0]);
+}
 
 function renderPOS(){
   const shift = currentShiftObj();
@@ -1504,8 +1512,8 @@ function renderPOS(){
   }
   const products = DB.products.filter(productMatchesFilters);
   const quickSchools = DB.schools.filter(s=>s.active && s.quickAccess);
-  const availSizes = [...new Set(DB.products.filter(p=>!session.selectedSchoolId || p.schools.includes(session.selectedSchoolId)).map(p=>p.size))];
-  const availColors = [...new Set(DB.products.filter(p=>!session.selectedSchoolId || p.schools.includes(session.selectedSchoolId)).map(p=>p.color))];
+  const availSizes = [...new Set(DB.products.filter(p=>!session.selectedSchoolId || productForSchool(p, session.selectedSchoolId)).map(p=>p.size))];
+  const availColors = [...new Set(DB.products.filter(p=>!session.selectedSchoolId || productForSchool(p, session.selectedSchoolId)).map(p=>p.color))];
 
   return `
   <div class="pos-layout">
@@ -1623,7 +1631,7 @@ function renderProductCard(p){
   <div class="product-card ${oos?'oos':''}" ${oos?'':`onclick="addToCart('${p.id}')"`}>
     <div class="pc-cat">${CAT_LABEL[p.category]||p.category}</div>
     <div class="pc-name">${esc(p.name)}</div>
-    <div class="pc-meta">${esc(p.schools.length>1 ? p.schools.length+' schools' : schoolShort(p.schools[0]))}</div>
+    <div class="pc-meta">${esc(!p.schools.length ? GENERAL_LABEL : p.schools.length>1 ? p.schools.length+' schools' : schoolShort(p.schools[0]))}</div>
     <div class="pc-meta">Size ${esc(p.size)}${p.color?' • '+esc(p.color):''}</div>
     <div class="pc-bottom">
       <div class="pc-price">${fmt(p.price)}</div>
@@ -1657,7 +1665,7 @@ function addToCart(productId){
   else {
     session.cart.push({
       productId: p.id, name:p.name, category:p.category,
-      school: p.schools.length>1 ? p.schools.map(schoolShort).join(', ') : schoolName(p.schools[0]),
+      school: schoolLabel(p),
       size:p.size, color:p.color, price:p.price, qty:1
     });
   }
@@ -1769,7 +1777,7 @@ function renderCompleteUniformModal(){
       </div>
       <div class="hint">Step 2 of 4 — Gender</div>`;
   } else if(step===3){
-    const items = DB.products.filter(p=>p.active && p.schools.includes(session.cuSchool) && (p.gender===session.cuGender || p.gender==='Unisex'));
+    const items = DB.products.filter(p=>p.active && productForSchool(p, session.cuSchool) && (p.gender===session.cuGender || p.gender==='Unisex'));
     const sizes = [...new Set(items.map(i=>i.size))];
     body = `<label>Select Size</label>
       <select id="cuSize" onchange="session.cuSize=this.value;">
@@ -1778,7 +1786,7 @@ function renderCompleteUniformModal(){
       </select>
       <div class="hint">Step 3 of 4 — Size</div>`;
   } else if(step===4){
-    const items = DB.products.filter(p=>p.active && p.schools.includes(session.cuSchool) && (p.gender===session.cuGender || p.gender==='Unisex') && p.size===session.cuSize);
+    const items = DB.products.filter(p=>p.active && productForSchool(p, session.cuSchool) && (p.gender===session.cuGender || p.gender==='Unisex') && p.size===session.cuSize);
     body = `<div style="margin-bottom:10px;font-weight:700;color:var(--navy);">${esc(schoolName(session.cuSchool))} · ${esc(session.cuGender)} · Size ${esc(session.cuSize)}</div>
       <div class="checklist">
         ${items.length ? items.map(p=>`
@@ -1836,7 +1844,7 @@ function addToCartSilent(productId){
   if(!p || p.stock<=0) return;
   const existing = session.cart.find(c=>c.productId===productId);
   if(existing){ if(existing.qty<p.stock) existing.qty++; }
-  else session.cart.push({ productId:p.id, name:p.name, category:p.category, school: schoolName(p.schools[0]), size:p.size, color:p.color, price:p.price, qty:1 });
+  else session.cart.push({ productId:p.id, name:p.name, category:p.category, school: schoolLabel(p), size:p.size, color:p.color, price:p.price, qty:1 });
 }
 
 /* ---- School picker modal ---- */
@@ -2360,7 +2368,7 @@ function renderProducts(){
             <td style="font-family:monospace;font-size:11.5px;">${esc(p.sku)}</td>
             <td>${esc(p.name)}</td>
             <td>${CAT_LABEL[p.category]||p.category}</td>
-            <td>${p.schools.slice(0,2).map(id=>`<span class="tag">${esc(schoolShort(id))}</span>`).join('')}${p.schools.length>2?`<span class="tag">+${p.schools.length-2}</span>`:''}</td>
+            <td>${!p.schools.length?`<span class="tag">${GENERAL_LABEL}</span>`:p.schools.slice(0,2).map(id=>`<span class="tag">${esc(schoolShort(id))}</span>`).join('')}${p.schools.length>2?`<span class="tag">+${p.schools.length-2}</span>`:''}</td>
             <td>${esc(p.size)}</td>
             <td>${esc(p.color)}</td>
             <td>${fmt(p.price)}</td>
@@ -2414,10 +2422,11 @@ function renderProductFormModal(){
           <div><label>Barcode</label><input type="text" id="pfBarcode" value="${esc(p?p.barcode:'')}" placeholder="Optional — defaults to SKU"></div>
           <div><label>Supplier</label><input type="text" id="pfSupplier" value="${esc(p?p.supplier:'In-house Production')}"></div>
         </div>
-        <label>Assign to School(s)</label>
+        <label>Assign to School(s) <span class="hint">— optional</span></label>
         <div class="checklist" id="pfSchools">
           ${schools.map(s=>`<label><input type="checkbox" value="${s.id}" ${selectedSchools.includes(s.id)?'checked':''}> ${esc(s.name)}</label>`).join('')}
         </div>
+        <div class="hint" style="margin-top:6px;">Leave every school unticked for a general item that every school uses, such as socks or a tie.</div>
       </div>
       <div class="modal-foot">
         ${p?`<button class="btn btn-danger" style="margin-right:auto;" onclick="deleteProduct('${p.id}')">${icon('trash-2')}<span>Deactivate</span></button>`:''}
@@ -2444,7 +2453,6 @@ function saveProductForm(id){
   const schools = Array.from(document.querySelectorAll('#pfSchools input:checked')).map(el=>el.value);
 
   if(!name){ toast('Product name is required.', 'err'); return; }
-  if(!schools.length){ toast('Assign the product to at least one school.', 'err'); return; }
 
   if(!sku){
     const n = DB.products.length+1;
@@ -2554,7 +2562,7 @@ function downloadStockTemplate(){
     ['Size','No','e.g. 32. Blank becomes "One Size".'],
     ['Color','No','e.g. Navy'],
     ['Gender','No','Boys, Girls or Unisex (blank = Unisex)'],
-    ['Schools','No','School name(s) separated by ; — blank or ALL = general stock shown under All Schools'],
+    ['Schools','No','School name(s) separated by ; — blank or ALL = general item that every school uses (socks, ties...)'],
     ['Cost','No','Buying cost per item (blank = 0)'],
     ['Price','Yes','Selling price per item, above 0'],
     ['Stock','No','Counted quantity, whole number (blank = 0)'],
@@ -2688,7 +2696,7 @@ function renderStockImportModal(){
             <thead><tr><th>Name</th><th>Category</th><th>Size</th><th>Schools</th><th>Price</th><th>Stock</th></tr></thead>
             <tbody>${imp.items.slice(0,8).map(i=>`<tr>
               <td>${esc(i.name)}</td><td>${esc(CAT_LABEL[i.category]||i.category)}</td><td>${esc(i.size)}</td>
-              <td>${i.schools.length?i.schools.map(id=>esc(schoolShort(id))).join(', '):'<span class="hint">All Schools</span>'}</td>
+              <td>${i.schools.length?i.schools.map(id=>esc(schoolShort(id))).join(', '):'<span class="hint">${GENERAL_LABEL}</span>'}</td>
               <td>${fmt(i.price)}</td><td>${i.stock}</td></tr>`).join('')}</tbody>
           </table>
         </div>`:''}
@@ -2870,7 +2878,7 @@ function renderInventory(){
   const term = (session.invSearch||'').toLowerCase();
   const schoolFilter = session.invSchool||'';
   let list = DB.products.filter(p=>{
-    if(schoolFilter && !p.schools.includes(schoolFilter)) return false;
+    if(schoolFilter && !productForSchool(p, schoolFilter)) return false;
     if(term && !(p.name+p.sku+p.color).toLowerCase().includes(term)) return false;
     return true;
   });
@@ -2893,7 +2901,7 @@ function renderInventory(){
           const st = stockStatus(p);
           return `<tr>
             <td>${esc(p.name)}<div class="hint">${esc(p.sku)}</div></td>
-            <td>${p.schools.map(id=>`<span class="tag">${esc(schoolShort(id))}</span>`).join('')}</td>
+            <td>${p.schools.length?p.schools.map(id=>`<span class="tag">${esc(schoolShort(id))}</span>`).join(''):`<span class="tag">${GENERAL_LABEL}</span>`}</td>
             <td>${CAT_LABEL[p.category]}</td><td>${esc(p.size)}</td><td>${esc(p.color)}</td>
             <td class="${st==='out'?'status-out':st==='low'?'status-low':'status-instock'}">${p.stock}</td>
             <td>${p.minStock}</td><td>${fmt(p.price)}</td>
@@ -3298,7 +3306,7 @@ function renderReports(){
       <table>
         <thead><tr><th>Product</th><th>Size</th><th>Color</th><th>Stock</th></tr></thead>
         <tbody>
-          ${DB.products.filter(p=>p.schools.includes(session.stockLookupSchool)).map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.size)}</td><td>${esc(p.color)}</td><td>${p.stock}</td></tr>`).join('')}
+          ${DB.products.filter(p=>productForSchool(p, session.stockLookupSchool)).map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.size)}</td><td>${esc(p.color)}</td><td>${p.stock}</td></tr>`).join('')}
         </tbody>
       </table>
     </div>` : ''}
